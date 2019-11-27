@@ -6,64 +6,16 @@
 mod test;
 
 use std::convert::TryInto;
-use std::sync::Arc;
 
+use liblumen_alloc::badarg;
 use liblumen_alloc::erts::exception;
-use liblumen_alloc::erts::exception::system::Alloc;
-use liblumen_alloc::erts::process::code::stack::frame::{Frame, Placement};
-use liblumen_alloc::erts::process::code::{self, result_from_exception};
-use liblumen_alloc::erts::process::ProcessControlBlock;
-use liblumen_alloc::erts::term::{Atom, Term};
-use liblumen_alloc::{badarg, ModuleFunctionArity};
+use liblumen_alloc::erts::process::Process;
+use liblumen_alloc::erts::term::prelude::*;
 
-pub fn place_frame_with_arguments(
-    process: &ProcessControlBlock,
-    placement: Placement,
-    flag: Term,
-    value: Term,
-) -> Result<(), Alloc> {
-    process.stack_push(value)?;
-    process.stack_push(flag)?;
-    process.place_frame(frame(), placement);
+use lumen_runtime_macros::native_implemented_function;
 
-    Ok(())
-}
-
-// Private
-
-fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
-    arc_process.reduce();
-
-    let flag = arc_process.stack_pop().unwrap();
-    let value = arc_process.stack_pop().unwrap();
-
-    match native(arc_process, flag, value) {
-        Ok(old_value) => {
-            arc_process.return_from_call(old_value)?;
-
-            ProcessControlBlock::call_code(arc_process)
-        }
-        Err(exception) => result_from_exception(arc_process, exception),
-    }
-}
-
-fn frame() -> Frame {
-    Frame::new(module_function_arity(), code)
-}
-
-fn function() -> Atom {
-    Atom::try_from_str("process_flag").unwrap()
-}
-
-fn module_function_arity() -> Arc<ModuleFunctionArity> {
-    Arc::new(ModuleFunctionArity {
-        module: super::module(),
-        function: function(),
-        arity: 2,
-    })
-}
-
-fn native(process: &ProcessControlBlock, flag: Term, value: Term) -> exception::Result {
+#[native_implemented_function(process_flag/2)]
+pub fn native(process: &Process, flag: Term, value: Term) -> exception::Result<Term> {
     let flag_atom: Atom = flag.try_into()?;
 
     match flag_atom.name() {

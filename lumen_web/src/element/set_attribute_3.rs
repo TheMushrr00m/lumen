@@ -1,91 +1,41 @@
-use std::convert::TryInto;
-use std::sync::Arc;
+//! ```elixir
+//! case Lumen.Web.Element.set_attribute(element, "data-attribute", "data-value") do
+//!   :ok -> ...
+//!   {:error, {:name, name} -> ...
+//! end
+//! ```
 
+use liblumen_alloc::atom;
 use liblumen_alloc::erts::exception;
-use liblumen_alloc::erts::exception::system::Alloc;
-use liblumen_alloc::erts::process::code::stack::frame::{Frame, Placement};
-use liblumen_alloc::erts::process::code::{self, result_from_exception};
-use liblumen_alloc::erts::process::ProcessControlBlock;
-use liblumen_alloc::erts::term::{atom_unchecked, Atom, Term};
-use liblumen_alloc::erts::ModuleFunctionArity;
+use liblumen_alloc::erts::process::Process;
+use liblumen_alloc::erts::term::prelude::*;
 
-use crate::{element, error, ok};
+use lumen_runtime_macros::native_implemented_function;
 
-/// ```elixir
-/// case Lumen.Web.Element.set_attribute(element, "data-attribute", "data-value") do
-///   :ok -> ...
-///   {:error, {:name, name} -> ...
-/// end
-/// ``
-pub fn place_frame_with_arguments(
-    process: &ProcessControlBlock,
-    placement: Placement,
-    element: Term,
-    attribute: Term,
-    value: Term,
-) -> Result<(), Alloc> {
-    process.stack_push(value)?;
-    process.stack_push(attribute)?;
-    process.stack_push(element)?;
-    process.place_frame(frame(), placement);
+use lumen_runtime::binary_to_string::binary_to_string;
 
-    Ok(())
-}
+use crate::element;
 
-// Private
-
-fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
-    arc_process.reduce();
-
-    let element = arc_process.stack_pop().unwrap();
-    let attribute = arc_process.stack_pop().unwrap();
-    let value = arc_process.stack_pop().unwrap();
-
-    match native(arc_process, element, attribute, value) {
-        Ok(ok_or_error) => {
-            arc_process.return_from_call(ok_or_error)?;
-
-            ProcessControlBlock::call_code(arc_process)
-        }
-        Err(exception) => result_from_exception(arc_process, exception),
-    }
-}
-
-fn frame() -> Frame {
-    Frame::new(module_function_arity(), code)
-}
-
-fn function() -> Atom {
-    Atom::try_from_str("set_attribute").unwrap()
-}
-
-fn module_function_arity() -> Arc<ModuleFunctionArity> {
-    Arc::new(ModuleFunctionArity {
-        module: super::module(),
-        function: function(),
-        arity: 3,
-    })
-}
-
-fn native(
-    process: &ProcessControlBlock,
+#[native_implemented_function(set_attribute/3)]
+pub fn native(
+    process: &Process,
     element_term: Term,
     name: Term,
     value: Term,
-) -> exception::Result {
+) -> exception::Result<Term> {
     let element = element::from_term(element_term)?;
 
-    let name_string: String = name.try_into()?;
-    let value_string: String = value.try_into()?;
+    let name_string: String = binary_to_string(name)?;
+    let value_string: String = binary_to_string(value)?;
 
     match element.set_attribute(&name_string, &value_string) {
-        Ok(()) => Ok(ok()),
+        Ok(()) => Ok(atom!("ok")),
         // InvalidCharacterError JsValue
         Err(_) => {
-            let name_tag = atom_unchecked("name");
+            let name_tag = Atom::str_to_term("name");
             let reason = process.tuple_from_slice(&[name_tag, name])?;
 
-            let error = error();
+            let error = atom!("error");
 
             process
                 .tuple_from_slice(&[error, reason])

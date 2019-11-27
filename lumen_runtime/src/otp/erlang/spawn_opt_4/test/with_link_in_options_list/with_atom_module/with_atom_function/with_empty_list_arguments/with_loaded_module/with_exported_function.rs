@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::otp::erlang;
+
 #[test]
 fn with_arity_when_run_exits_normal_and_parent_does_not_exit() {
     let parent_arc_process = process::test_init();
@@ -8,11 +10,13 @@ fn with_arity_when_run_exits_normal_and_parent_does_not_exit() {
     let priority = Priority::Normal;
     let run_queue_length_before = arc_scheduler.run_queue_len(priority);
 
-    let module_atom = Atom::try_from_str("erlang").unwrap();
-    let module = unsafe { module_atom.as_term() };
+    erlang::self_0::export();
 
-    let function_atom = Atom::try_from_str("self").unwrap();
-    let function = unsafe { function_atom.as_term() };
+    let module_atom = erlang::module();
+    let module: Term = module_atom.encode().unwrap();
+
+    let function_atom = erlang::self_0::function();
+    let function: Term = function_atom.encode().unwrap();
 
     let arguments = Term::NIL;
 
@@ -27,7 +31,7 @@ fn with_arity_when_run_exits_normal_and_parent_does_not_exit() {
     assert!(result.is_ok());
 
     let child_pid = result.unwrap();
-    let child_pid_result_pid: core::result::Result<Pid, _> = child_pid.try_into();
+    let child_pid_result_pid: Result<Pid, _> = child_pid.try_into();
 
     assert!(child_pid_result_pid.is_ok());
 
@@ -47,9 +51,9 @@ fn with_arity_when_run_exits_normal_and_parent_does_not_exit() {
 
     match *child_arc_process.status.read() {
         Status::Exiting(ref runtime_exception) => {
-            assert_eq!(runtime_exception, &exit!(atom_unchecked("normal")));
+            assert_eq!(runtime_exception, &exit!(atom!("normal")));
         }
-        ref status => panic!("ProcessControlBlock status ({:?}) is not exiting.", status),
+        ref status => panic!("Process status ({:?}) is not exiting.", status),
     };
 
     assert!(!parent_arc_process.is_exiting())
@@ -63,11 +67,8 @@ fn without_arity_when_run_exits_undef_and_exits_parent() {
     let priority = Priority::Normal;
     let run_queue_length_before = arc_scheduler.run_queue_len(priority);
 
-    let module_atom = Atom::try_from_str("erlang").unwrap();
-    let module = unsafe { module_atom.as_term() };
-
-    let function_atom = Atom::try_from_str("+").unwrap();
-    let function = unsafe { function_atom.as_term() };
+    let module = atom!("erlang");
+    let function = atom!("+");
 
     // `+` is arity 1, not 0
     let arguments = Term::NIL;
@@ -83,7 +84,7 @@ fn without_arity_when_run_exits_undef_and_exits_parent() {
     assert!(result.is_ok());
 
     let child_pid = result.unwrap();
-    let child_pid_result_pid: core::result::Result<Pid, _> = child_pid.try_into();
+    let child_pid_result_pid: Result<Pid, _> = child_pid.try_into();
 
     assert!(child_pid_result_pid.is_ok());
 
@@ -105,14 +106,14 @@ fn without_arity_when_run_exits_undef_and_exits_parent() {
 
     match *child_arc_process.status.read() {
         Status::Exiting(ref runtime_exception) => {
-            let runtime_undef: runtime::Exception =
+            let runtime_undef: RuntimeException =
                 undef!(&child_arc_process, module, function, arguments)
                     .try_into()
                     .unwrap();
 
             assert_eq!(runtime_exception, &runtime_undef);
         }
-        ref status => panic!("ProcessControlBlock status ({:?}) is not exiting.", status),
+        ref status => panic!("Process status ({:?}) is not exiting.", status),
     };
 
     assert!(parent_arc_process.is_exiting());

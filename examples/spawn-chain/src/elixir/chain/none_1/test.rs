@@ -3,10 +3,11 @@ use super::*;
 use std::sync::Once;
 
 use lumen_runtime::process::spawn::options::Options;
+use lumen_runtime::process::spawn::Spawned;
 use lumen_runtime::scheduler::Scheduler;
 use lumen_runtime::{process, registry};
 
-use crate::start::set_apply_fn;
+use crate::start::export_code;
 
 #[test]
 fn with_1() {
@@ -93,13 +94,13 @@ fn with_65536() {
     run_through(65536)
 }
 
-fn inspect_code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
+fn inspect_code(arc_process: &Arc<Process>) -> code::Result {
     let time_value = arc_process.stack_pop().unwrap();
 
     lumen_runtime::system::io::puts(&format!("{}", time_value));
     arc_process.remove_last_frame();
 
-    ProcessControlBlock::call_code(arc_process)
+    Process::call_code(arc_process)
 }
 
 fn run_through(n: usize) {
@@ -108,12 +109,12 @@ fn run_through(n: usize) {
     let parent_process = None;
     let mut options: Options = Default::default();
     options.min_heap_size = Some(100 + 5 * n);
-    let process = process::spawn::code(
+    let Spawned { process, .. } = process::spawn::code(
         parent_process,
         options,
         Atom::try_from_str("Elixir.ChainTest").unwrap(),
         Atom::try_from_str("inspect").unwrap(),
-        vec![],
+        &[],
         inspect_code,
     )
     .unwrap();
@@ -130,7 +131,7 @@ fn run_through(n: usize) {
 static START: Once = Once::new();
 
 fn start() {
-    set_apply_fn();
+    export_code();
 }
 
 fn start_once() {

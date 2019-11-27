@@ -1,19 +1,33 @@
 use std::ops::RangeInclusive;
 use std::sync::Arc;
 
+use proptest::arbitrary::any;
 use proptest::collection::SizeRange;
 use proptest::strategy::{BoxedStrategy, Just, Strategy};
 
-use liblumen_alloc::erts::{ProcessControlBlock, Term};
+use liblumen_alloc::erts::term::prelude::{Atom, Term};
+use liblumen_alloc::erts::Process;
 
 use crate::process;
 
+pub mod base;
 pub mod byte_vec;
 pub mod module_function_arity;
+pub mod node;
 pub mod size_range;
 pub mod term;
 
 pub const NON_EMPTY_RANGE_INCLUSIVE: RangeInclusive<usize> = 1..=MAX_LEN;
+pub const NON_EXISTENT_ATOM_PREFIX: &str = "non_existent";
+
+pub fn atom() -> BoxedStrategy<Atom> {
+    any::<String>()
+        .prop_filter("Reserved for existing/safe atom tests", |s| {
+            !s.starts_with(NON_EXISTENT_ATOM_PREFIX)
+        })
+        .prop_map(|s| Atom::try_from_str(&s).unwrap())
+        .boxed()
+}
 
 pub fn bits_to_bytes(bits: usize) -> usize {
     (bits + 7) / 8
@@ -23,7 +37,7 @@ pub fn byte_vec() -> BoxedStrategy<Vec<u8>> {
     byte_vec::with_size_range(RANGE_INCLUSIVE.into())
 }
 
-pub fn process() -> BoxedStrategy<Arc<ProcessControlBlock>> {
+pub fn process() -> BoxedStrategy<Arc<Process>> {
     Just(process::test_init())
         .prop_flat_map(|init_arc_process| {
             // generated in a prop_flat_map instead of prop_map so that a new process is generated
@@ -33,7 +47,7 @@ pub fn process() -> BoxedStrategy<Arc<ProcessControlBlock>> {
         .boxed()
 }
 
-pub fn term(arc_process: Arc<ProcessControlBlock>) -> BoxedStrategy<Term> {
+pub fn term(arc_process: Arc<Process>) -> BoxedStrategy<Term> {
     let container_arc_process = arc_process.clone();
 
     term::leaf(RANGE_INCLUSIVE, arc_process)

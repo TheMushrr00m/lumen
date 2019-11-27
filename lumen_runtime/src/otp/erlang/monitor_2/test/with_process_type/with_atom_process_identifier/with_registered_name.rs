@@ -105,7 +105,7 @@ fn when_monitored_process_exits_it_sends_message_for_each_monitor_reference() {
 
         assert!(!monitored_arc_process.is_exiting());
 
-        let reason = atom_unchecked("normal");
+        let reason = Atom::str_to_term("normal");
         exit_1::place_frame_with_arguments(&monitored_arc_process, Placement::Replace, reason)
             .unwrap();
 
@@ -114,7 +114,7 @@ fn when_monitored_process_exits_it_sends_message_for_each_monitor_reference() {
         assert!(monitored_arc_process.is_exiting());
         assert!(!monitoring_arc_process.is_exiting());
 
-        let tag = atom_unchecked("DOWN");
+        let tag = Atom::str_to_term("DOWN");
 
         assert!(has_message(
             &monitoring_arc_process,
@@ -124,7 +124,7 @@ fn when_monitored_process_exits_it_sends_message_for_each_monitor_reference() {
                     first_monitor_reference,
                     r#type(),
                     monitoring_arc_process
-                        .tuple_from_slice(&[first_registered_name, node_0()])
+                        .tuple_from_slice(&[first_registered_name, node_0::native()])
                         .unwrap(),
                     reason
                 ])
@@ -138,7 +138,7 @@ fn when_monitored_process_exits_it_sends_message_for_each_monitor_reference() {
                     second_monitor_reference,
                     r#type(),
                     monitoring_arc_process
-                        .tuple_from_slice(&[second_registered_name, node_0()])
+                        .tuple_from_slice(&[second_registered_name, node_0::native()])
                         .unwrap(),
                     reason
                 ])

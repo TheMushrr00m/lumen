@@ -2,18 +2,18 @@ use std::sync::Arc;
 
 use proptest::strategy::{BoxedStrategy, Strategy};
 
-use liblumen_alloc::erts::term::{make_pid, Pid, Term};
-use liblumen_alloc::erts::ProcessControlBlock;
+use liblumen_alloc::erts::term::prelude::*;
+use liblumen_alloc::erts::Process;
 
-pub mod external;
+use crate::test::strategy::node;
 
-pub fn external(arc_process: Arc<ProcessControlBlock>) -> BoxedStrategy<Term> {
+pub fn external(arc_process: Arc<Process>) -> BoxedStrategy<Term> {
     let external_pid_arc_process = arc_process.clone();
 
-    (external::node_id(), number(), serial())
-        .prop_map(move |(node, number, serial)| {
+    (node::external(), number(), serial())
+        .prop_map(move |(arc_node, number, serial)| {
             external_pid_arc_process
-                .external_pid_with_node_id(node, number, serial)
+                .external_pid(arc_node, number, serial)
                 .unwrap()
         })
         .boxed()
@@ -21,7 +21,7 @@ pub fn external(arc_process: Arc<ProcessControlBlock>) -> BoxedStrategy<Term> {
 
 pub fn local() -> BoxedStrategy<Term> {
     (number(), serial())
-        .prop_map(|(number, serial)| make_pid(number, serial).unwrap())
+        .prop_map(|(number, serial)| Pid::make_term(number, serial).unwrap())
         .boxed()
 }
 

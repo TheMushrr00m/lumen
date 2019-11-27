@@ -2,16 +2,16 @@ use std::convert::TryInto;
 use std::sync::Arc;
 
 use liblumen_alloc::borrow::clone_to_process::CloneToProcess;
-use liblumen_alloc::erts::exception::system::Alloc;
+use liblumen_alloc::erts::exception::Alloc;
 use liblumen_alloc::erts::message::{self, Message};
 use liblumen_alloc::erts::process::code::stack::frame::{Frame, Placement};
-use liblumen_alloc::erts::process::{code, ProcessControlBlock};
-use liblumen_alloc::erts::term::{Boxed, Closure, Term};
+use liblumen_alloc::erts::process::{code, Process};
+use liblumen_alloc::erts::term::prelude::*;
 
 use crate::elixir::chain::create_processes_2::label_3;
 
 pub fn place_frame_with_arguments(
-    process: &ProcessControlBlock,
+    process: &Process,
     placement: Placement,
     output: Term,
 ) -> Result<(), Alloc> {
@@ -33,7 +33,7 @@ pub fn place_frame_with_arguments(
 ///     final_answer
 /// end
 /// ```
-fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
+fn code(arc_process: &Arc<Process>) -> code::Result {
     // locked mailbox scope
     let received = {
         let mailbox_guard = arc_process.mailbox.lock();
@@ -50,7 +50,7 @@ fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
 
                 if message_data.is_integer() {
                     let final_answer = match message {
-                        Message::Process(message::Process { data }) => data.clone(),
+                        Message::Process(message::Process { data }) => *data,
                         Message::HeapFragment(message::HeapFragment { data, .. }) => {
                             match data.clone_to_heap(&mut arc_process.acquire_heap()) {
                                 Ok(heap_data) => heap_data,
@@ -66,23 +66,23 @@ fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
                     let sent = arc_process.stack_pop().unwrap();
                     assert!(sent.is_integer());
                     let output = arc_process.stack_pop().unwrap();
-                    assert!(output.is_function());
+                    assert!(output.is_boxed_function());
 
                     label_3::place_frame_with_arguments(
                         arc_process,
                         Placement::Replace,
                         final_answer,
-                    )?;
+                    )
+                    .unwrap();
 
                     let output_closure: Boxed<Closure> = output.try_into().unwrap();
                     // TODO use `<>` and `to_string` to more closely emulate interpolation
-                    let binary =
-                        arc_process.binary_from_str(&format!("Result is {}", final_answer))?;
-                    output_closure.place_frame_with_arguments(
-                        arc_process,
-                        Placement::Push,
-                        vec![binary],
-                    )?;
+                    let binary = arc_process
+                        .binary_from_str(&format!("Result is {}", final_answer))
+                        .unwrap();
+                    output_closure
+                        .place_frame_with_arguments(arc_process, Placement::Push, vec![binary])
+                        .unwrap();
 
                     found_position = Some(position);
 
@@ -117,7 +117,7 @@ fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
     arc_process.reduce();
 
     if received {
-        ProcessControlBlock::call_code(arc_process)
+        Process::call_code(arc_process)
     } else {
         arc_process.wait();
 
@@ -125,7 +125,7 @@ fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
     }
 }
 
-fn frame(process: &ProcessControlBlock) -> Frame {
+fn frame(process: &Process) -> Frame {
     let module_function_arity = process.current_module_function_arity().unwrap();
 
     Frame::new(module_function_arity, code)

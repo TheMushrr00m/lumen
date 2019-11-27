@@ -6,65 +6,17 @@
 mod test;
 
 use std::convert::TryInto;
-use std::sync::Arc;
 
 use crate::registry::pid_to_process;
 use liblumen_alloc::erts::exception;
-use liblumen_alloc::erts::exception::system::Alloc;
-use liblumen_alloc::erts::process::code::stack::frame::{Frame, Placement};
-use liblumen_alloc::erts::process::code::{self, result_from_exception};
-use liblumen_alloc::erts::process::ProcessControlBlock;
-use liblumen_alloc::erts::term::{atom_unchecked, Atom, Pid, Term};
-use liblumen_alloc::{badarg, AsTerm, ModuleFunctionArity};
+use liblumen_alloc::erts::process::Process;
+use liblumen_alloc::erts::term::prelude::*;
+use liblumen_alloc::{atom, badarg};
 
-pub fn place_frame_with_arguments(
-    process: &ProcessControlBlock,
-    placement: Placement,
-    pid: Term,
-    item: Term,
-) -> Result<(), Alloc> {
-    process.stack_push(item)?;
-    process.stack_push(pid)?;
-    process.place_frame(frame(), placement);
+use lumen_runtime_macros::native_implemented_function;
 
-    Ok(())
-}
-
-// Private
-
-fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
-    arc_process.reduce();
-
-    let pid = arc_process.stack_pop().unwrap();
-    let item = arc_process.stack_pop().unwrap();
-
-    match native(arc_process, pid, item) {
-        Ok(info) => {
-            arc_process.return_from_call(info)?;
-
-            ProcessControlBlock::call_code(arc_process)
-        }
-        Err(exception) => result_from_exception(arc_process, exception),
-    }
-}
-
-fn frame() -> Frame {
-    Frame::new(module_function_arity(), code)
-}
-
-fn function() -> Atom {
-    Atom::try_from_str("process_info").unwrap()
-}
-
-fn module_function_arity() -> Arc<ModuleFunctionArity> {
-    Arc::new(ModuleFunctionArity {
-        module: super::module(),
-        function: function(),
-        arity: 2,
-    })
-}
-
-fn native(process: &ProcessControlBlock, pid: Term, item: Term) -> exception::Result {
+#[native_implemented_function(process_info/2)]
+pub fn native(process: &Process, pid: Term, item: Term) -> exception::Result<Term> {
     let pid_pid: Pid = pid.try_into()?;
     let item_atom: Atom = item.try_into()?;
 
@@ -73,12 +25,14 @@ fn native(process: &ProcessControlBlock, pid: Term, item: Term) -> exception::Re
     } else {
         match pid_to_process(&pid_pid) {
             Some(pid_arc_process) => process_info(&pid_arc_process, item_atom),
-            None => Ok(atom_unchecked("undefined")),
+            None => Ok(atom!("undefined")),
         }
     }
 }
 
-fn process_info(process: &ProcessControlBlock, item: Atom) -> exception::Result {
+// Private
+
+fn process_info(process: &Process, item: Atom) -> exception::Result<Term> {
     match item.name() {
         "backtrace" => unimplemented!(),
         "binary" => unimplemented!(),
@@ -117,11 +71,11 @@ fn process_info(process: &ProcessControlBlock, item: Atom) -> exception::Result 
     }
 }
 
-fn registered_name(process: &ProcessControlBlock) -> exception::Result {
+fn registered_name(process: &Process) -> exception::Result<Term> {
     match *process.registered_name.read() {
         Some(registered_name) => {
-            let tag = atom_unchecked("registered_name");
-            let value = unsafe { registered_name.as_term() };
+            let tag = atom!("registered_name");
+            let value = registered_name.encode()?;
 
             process
                 .tuple_from_slice(&[tag, value])

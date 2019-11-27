@@ -21,6 +21,8 @@ fn without_monitor_returns_false() {
     });
 }
 
-fn options(process: &ProcessControlBlock) -> Term {
-    process.list_from_slice(&[atom_unchecked("info")]).unwrap()
+fn options(process: &Process) -> Term {
+    process
+        .list_from_slice(&[Atom::str_to_term("info")])
+        .unwrap()
 }

@@ -45,7 +45,7 @@ fn with_small_integer_addend_with_underflow_returns_big_integer() {
 
         let sum = result.unwrap();
 
-        assert!(sum.is_bigint());
+        assert!(sum.is_boxed_bigint());
     })
 }
 
@@ -62,7 +62,7 @@ fn with_small_integer_addend_with_overflow_returns_big_integer() {
 
         let sum = result.unwrap();
 
-        assert!(sum.is_bigint());
+        assert!(sum.is_boxed_bigint());
     })
 }
 
@@ -71,7 +71,7 @@ fn with_big_integer_addend_returns_big_integer() {
     with(|augend, process| {
         let addend = process.integer(SmallInteger::MAX_VALUE + 1).unwrap();
 
-        assert!(addend.is_bigint());
+        assert!(addend.is_boxed_bigint());
 
         let result = native(&process, augend, addend);
 
@@ -79,7 +79,7 @@ fn with_big_integer_addend_returns_big_integer() {
 
         let sum = result.unwrap();
 
-        assert!(sum.is_bigint());
+        assert!(sum.is_boxed_bigint());
     })
 }
 
@@ -121,7 +121,7 @@ fn with_float_addend_with_overflow_returns_max_float() {
 
 fn with<F>(f: F)
 where
-    F: FnOnce(Term, &ProcessControlBlock) -> (),
+    F: FnOnce(Term, &Process) -> (),
 {
     with_process(|process| {
         let augend = process.integer(2).unwrap();

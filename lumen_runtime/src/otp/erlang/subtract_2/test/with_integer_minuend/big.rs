@@ -5,7 +5,7 @@ fn with_big_integer_subtrahend_with_underflow_returns_small_integer() {
     with(|minuend, process| {
         let subtrahend = process.integer(SmallInteger::MAX_VALUE + 1).unwrap();
 
-        assert!(subtrahend.is_bigint());
+        assert!(subtrahend.is_boxed_bigint());
 
         let result = native(&process, minuend, subtrahend);
 
@@ -43,12 +43,12 @@ fn with_float_subtrahend_with_overflow_returns_max_float() {
 
 fn with<F>(f: F)
 where
-    F: FnOnce(Term, &ProcessControlBlock) -> (),
+    F: FnOnce(Term, &Process) -> (),
 {
     with_process(|process| {
         let minuend: Term = process.integer(SmallInteger::MAX_VALUE + 1).unwrap();
 
-        assert!(minuend.is_bigint());
+        assert!(minuend.is_boxed_bigint());
 
         f(minuend, &process)
     })

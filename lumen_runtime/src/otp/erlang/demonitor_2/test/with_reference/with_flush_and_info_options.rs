@@ -21,8 +21,8 @@ fn without_monitor_returns_false() {
     });
 }
 
-fn options(process: &ProcessControlBlock) -> Term {
+fn options(process: &Process) -> Term {
     process
-        .list_from_slice(&[atom_unchecked("flush"), atom_unchecked("info")])
+        .list_from_slice(&[Atom::str_to_term("flush"), Atom::str_to_term("info")])
         .unwrap()
 }

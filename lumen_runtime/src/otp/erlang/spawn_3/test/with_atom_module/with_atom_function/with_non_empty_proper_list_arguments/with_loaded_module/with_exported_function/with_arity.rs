@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::otp::erlang;
+
 #[test]
 fn with_valid_arguments_when_run_exits_normal_and_parent_does_not_exit() {
     let parent_arc_process = process::test_init();
@@ -8,11 +10,13 @@ fn with_valid_arguments_when_run_exits_normal_and_parent_does_not_exit() {
     let priority = Priority::Normal;
     let run_queue_length_before = arc_scheduler.run_queue_len(priority);
 
-    let module_atom = Atom::try_from_str("erlang").unwrap();
-    let module = unsafe { module_atom.as_term() };
+    erlang::number_or_badarith_1::export();
 
-    let function_atom = Atom::try_from_str("+").unwrap();
-    let function = unsafe { function_atom.as_term() };
+    let module_atom = erlang::module();
+    let module: Term = module_atom.encode().unwrap();
+
+    let function_atom = erlang::number_or_badarith_1::function();
+    let function: Term = function_atom.encode().unwrap();
 
     let number = parent_arc_process.integer(0).unwrap();
     let arguments = parent_arc_process.cons(number, Term::NIL).unwrap();
@@ -22,7 +26,7 @@ fn with_valid_arguments_when_run_exits_normal_and_parent_does_not_exit() {
     assert!(result.is_ok());
 
     let child_pid = result.unwrap();
-    let child_pid_result_pid: core::result::Result<Pid, _> = child_pid.try_into();
+    let child_pid_result_pid: Result<Pid, _> = child_pid.try_into();
 
     assert!(child_pid_result_pid.is_ok());
 
@@ -42,9 +46,9 @@ fn with_valid_arguments_when_run_exits_normal_and_parent_does_not_exit() {
 
     match *child_arc_process.status.read() {
         Status::Exiting(ref runtime_exception) => {
-            assert_eq!(runtime_exception, &exit!(atom_unchecked("normal")));
+            assert_eq!(runtime_exception, &exit!(atom!("normal")));
         }
-        ref status => panic!("ProcessControlBlock status ({:?}) is not exiting.", status),
+        ref status => panic!("Process status ({:?}) is not exiting.", status),
     };
 
     assert!(!parent_arc_process.is_exiting());
@@ -58,14 +62,16 @@ fn without_valid_arguments_when_run_exits_and_parent_does_not_exit() {
     let priority = Priority::Normal;
     let run_queue_length_before = arc_scheduler.run_queue_len(priority);
 
-    let module_atom = Atom::try_from_str("erlang").unwrap();
-    let module = unsafe { module_atom.as_term() };
+    erlang::number_or_badarith_1::export();
 
-    let function_atom = Atom::try_from_str("+").unwrap();
-    let function = unsafe { function_atom.as_term() };
+    let module_atom = erlang::module();
+    let module: Term = module_atom.encode().unwrap();
+
+    let function_atom = erlang::number_or_badarith_1::function();
+    let function: Term = function_atom.encode().unwrap();
 
     // not a number
-    let number = atom_unchecked("zero");
+    let number = atom!("zero");
     let arguments = parent_arc_process.cons(number, Term::NIL).unwrap();
 
     let result = spawn_3::native(&parent_arc_process, module, function, arguments);
@@ -73,7 +79,7 @@ fn without_valid_arguments_when_run_exits_and_parent_does_not_exit() {
     assert!(result.is_ok());
 
     let child_pid = result.unwrap();
-    let child_pid_result_pid: core::result::Result<Pid, _> = child_pid.try_into();
+    let child_pid_result_pid: Result<Pid, _> = child_pid.try_into();
 
     assert!(child_pid_result_pid.is_ok());
 
@@ -92,8 +98,8 @@ fn without_valid_arguments_when_run_exits_and_parent_does_not_exit() {
     assert_eq!(
         child_arc_process.current_module_function_arity(),
         Some(Arc::new(ModuleFunctionArity {
-            module: module_atom,
-            function: function_atom,
+            module: atom_from!(module),
+            function: atom_from!(function),
             arity: 1
         }))
     );
@@ -102,7 +108,7 @@ fn without_valid_arguments_when_run_exits_and_parent_does_not_exit() {
         Status::Exiting(ref runtime_exception) => {
             assert_eq!(runtime_exception, &badarith!());
         }
-        ref status => panic!("ProcessControlBlock status ({:?}) is not exiting.", status),
+        ref status => panic!("Process status ({:?}) is not exiting.", status),
     };
 
     assert!(!parent_arc_process.is_exiting())

@@ -1,6 +1,6 @@
 # Lumen - A new compiler and runtime for BEAM languages
 
-[![CircleCI](https://circleci.com/gh/lumen/lumen.svg?style=svg&circle-token=c53b1f6f7fc193c1bfa9425b404aae690106a804)](https://circleci.com/gh/lumen/lumen)
+[![Build Status](https://api.cirrus-ci.com/github/lumen/lumen.svg)](https://cirrus-ci.com/github/lumen/lumen)
 
 * [Contributing](#contributing)
   * [Tools](#contrib-tools)
@@ -40,6 +40,8 @@ Next, you will need to install the `wasm32` targets for the toolchain:
 You will also need to install the `wasm-bindgen** command-line tools:
 
     cargo +nightly install wasm-bindgen-cli
+
+Finally we will need `wasm-pack`. It is needed to build the examples and get up and running. Follow their installation instructions from [the wasm-pack repository](https://github.com/rustwasm/wasm-pack).
 
 #### LLVM
 
@@ -153,7 +155,7 @@ Lumen is different than BEAM in the following ways:
 * The runtime library provided by Lumen is written in Rust, and while very
   similar, differs in mostly transparent ways. One of the goals is to provide a
   better foundation for learning how the runtime is implemented, and to take
-  advantage of Rusts' more powerful static analysis to catch bugs early.
+  advantage of Rust's more powerful static analysis to catch bugs early.
 * It has support for targeting WebAssembly
 
 The result of compiling a BEAM application via Lumen is a static executable. This differs

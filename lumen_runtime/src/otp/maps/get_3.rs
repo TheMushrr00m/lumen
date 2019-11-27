@@ -6,74 +6,16 @@
 mod test;
 
 use std::convert::TryInto;
-use std::sync::Arc;
 
+use liblumen_alloc::badmap;
 use liblumen_alloc::erts::exception;
-use liblumen_alloc::erts::exception::system::Alloc;
-use liblumen_alloc::erts::process::code::stack::frame::{Frame, Placement};
-use liblumen_alloc::erts::process::code::{self, result_from_exception};
-use liblumen_alloc::erts::process::ProcessControlBlock;
-use liblumen_alloc::erts::term::{Atom, Boxed, Map, Term};
-use liblumen_alloc::{badmap, ModuleFunctionArity};
+use liblumen_alloc::erts::process::Process;
+use liblumen_alloc::erts::term::prelude::*;
 
-pub fn place_frame_with_arguments(
-    process: &ProcessControlBlock,
-    placement: Placement,
-    key: Term,
-    map: Term,
-    default: Term,
-) -> Result<(), Alloc> {
-    process.stack_push(map)?;
-    process.stack_push(key)?;
-    process.stack_push(default)?;
-    process.place_frame(frame(), placement);
+use lumen_runtime_macros::native_implemented_function;
 
-    Ok(())
-}
-
-// Crate Public
-
-pub(in crate::otp) fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
-    arc_process.reduce();
-
-    let default = arc_process.stack_pop().unwrap();
-    let key = arc_process.stack_pop().unwrap();
-    let map = arc_process.stack_pop().unwrap();
-
-    match native(arc_process, key, map, default) {
-        Ok(boolean) => {
-            arc_process.return_from_call(boolean)?;
-
-            ProcessControlBlock::call_code(arc_process)
-        }
-        Err(exception) => result_from_exception(arc_process, exception),
-    }
-}
-
-// Private
-
-fn frame() -> Frame {
-    Frame::new(module_function_arity(), code)
-}
-
-fn function() -> Atom {
-    Atom::try_from_str("get").unwrap()
-}
-
-fn module_function_arity() -> Arc<ModuleFunctionArity> {
-    Arc::new(ModuleFunctionArity {
-        module: super::module(),
-        function: function(),
-        arity: 3,
-    })
-}
-
-pub fn native(
-    process: &ProcessControlBlock,
-    key: Term,
-    map: Term,
-    default: Term,
-) -> exception::Result {
+#[native_implemented_function(get/3)]
+pub fn native(process: &Process, key: Term, map: Term, default: Term) -> exception::Result<Term> {
     let result_map: Result<Boxed<Map>, _> = map.try_into();
 
     match result_map {

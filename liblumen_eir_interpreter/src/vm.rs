@@ -1,14 +1,15 @@
 use std::rc::Rc;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use libeir_ir::FunctionIdent;
 
-use liblumen_alloc::erts::exception;
-use liblumen_alloc::erts::process::Status;
-use liblumen_alloc::erts::term::{atom_unchecked, Atom, Term};
+use liblumen_alloc::atom;
+use liblumen_alloc::erts::exception::RuntimeException;
+use liblumen_alloc::erts::process::{Process, Status};
+use liblumen_alloc::erts::term::prelude::*;
 
 use lumen_runtime::process::spawn::options::Options;
-use lumen_runtime::scheduler::Scheduler;
+use lumen_runtime::scheduler::{Scheduler, Spawned};
 use lumen_runtime::system;
 
 use super::module::ModuleRegistry;
@@ -16,6 +17,7 @@ use super::module::ModuleRegistry;
 pub struct VMState {
     pub modules: RwLock<ModuleRegistry>,
     pub closure_hack: RwLock<Vec<Vec<Term>>>,
+    pub init: Arc<Process>,
 }
 
 impl VMState {
@@ -24,11 +26,18 @@ impl VMState {
 
         let mut modules = ModuleRegistry::new();
         modules.register_native_module(crate::native::make_erlang());
+        modules.register_native_module(crate::native::make_lists());
         modules.register_native_module(crate::native::make_maps());
+        modules.register_native_module(crate::native::make_logger());
+        modules.register_native_module(crate::native::make_lumen_intrinsics());
+
+        let arc_scheduler = Scheduler::current();
+        let init_arc_process = arc_scheduler.spawn_init(0).unwrap();
 
         VMState {
             modules: RwLock::new(modules),
             closure_hack: RwLock::new(Vec::new()),
+            init: init_arc_process,
         }
     }
 
@@ -50,7 +59,10 @@ impl VMState {
         let mut options: Options = Default::default();
         options.min_heap_size = Some(4 + 1000 * 2);
 
-        let run_arc_process = Scheduler::spawn_apply_3(
+        let Spawned {
+            arc_process: run_arc_process,
+            ..
+        } = Scheduler::spawn_apply_3(
             &init_arc_process,
             options,
             module,
@@ -64,20 +76,17 @@ impl VMState {
 
             match *run_arc_process.status.read() {
                 Status::Exiting(ref exception) => match exception {
-                    exception::runtime::Exception {
-                        class: exception::runtime::Class::Exit,
-                        reason,
-                        ..
-                    } => {
-                        if *reason != atom_unchecked("normal") {
-                            panic!("ProcessControlBlock exited: {:?}", reason);
+                    RuntimeException::Exit(err) => {
+                        let reason = err.reason();
+                        if reason != atom!("normal") {
+                            panic!("Process exited: {:?}", reason);
                         } else {
                             panic!("yay!");
                         }
                     }
                     _ => {
                         panic!(
-                            "ProcessControlBlock exception: {:?}\n{:?}",
+                            "Process exception: {:?}\n{:?}",
                             exception,
                             run_arc_process.stacktrace()
                         );

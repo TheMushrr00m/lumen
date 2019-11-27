@@ -5,7 +5,6 @@ pub mod start;
 
 use core::cmp::Ordering::{self, *};
 use core::ops::{Index, IndexMut, RangeBounds};
-use core::result::Result;
 
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Drain;
@@ -14,14 +13,15 @@ use hashbrown::HashMap;
 
 use liblumen_core::locks::Mutex;
 
-use liblumen_alloc::erts::exception::system::Alloc;
-use liblumen_alloc::erts::term::{atom_unchecked, reference, Atom, Reference, Term};
+use liblumen_alloc::erts::exception::AllocResult;
+use liblumen_alloc::erts::term::prelude::*;
 use liblumen_alloc::CloneToProcess;
-use liblumen_alloc::ProcessControlBlock;
+use liblumen_alloc::Process;
 
 use crate::registry;
 use crate::scheduler::{Scheduled, Scheduler};
-use crate::time::monotonic::{self, Milliseconds};
+use crate::time::monotonic;
+use crate::time::Milliseconds;
 
 pub fn cancel(timer_reference: &Reference) -> Option<Milliseconds> {
     timer_reference
@@ -40,8 +40,8 @@ pub fn start(
     destination: Destination,
     timeout: Timeout,
     process_message: Term,
-    process_control_block: &ProcessControlBlock,
-) -> Result<Term, Alloc> {
+    process: &Process,
+) -> AllocResult<Term> {
     let scheduler = Scheduler::current();
 
     let result = scheduler.hierarchy.write().start(
@@ -49,7 +49,7 @@ pub fn start(
         destination,
         timeout,
         process_message,
-        process_control_block,
+        process,
         &scheduler,
     );
 
@@ -67,7 +67,7 @@ pub fn timeout() {
 #[cfg_attr(debug_assertions, derive(Debug))]
 pub enum Destination {
     Name(Atom),
-    Process(Weak<ProcessControlBlock>),
+    Process(Weak<Process>),
 }
 
 #[cfg_attr(test, derive(Debug))]
@@ -76,7 +76,7 @@ pub struct Hierarchy {
     soon: Wheel,
     later: Wheel,
     long_term: Slot,
-    timer_by_reference_number: HashMap<reference::Number, Weak<Timer>>,
+    timer_by_reference_number: HashMap<ReferenceNumber, Weak<Timer>>,
 }
 
 impl Hierarchy {
@@ -87,7 +87,7 @@ impl Hierarchy {
     const LATER_TOTAL_MILLISECONDS: Milliseconds =
         Self::LATER_MILLISECONDS_PER_SLOT * (Wheel::LENGTH as Milliseconds);
 
-    fn cancel(&mut self, timer_reference_number: reference::Number) -> Option<Milliseconds> {
+    fn cancel(&mut self, timer_reference_number: ReferenceNumber) -> Option<Milliseconds> {
         self.timer_by_reference_number
             .remove(&timer_reference_number)
             .and_then(|weak_timer| weak_timer.upgrade())
@@ -124,7 +124,7 @@ impl Hierarchy {
         }
     }
 
-    fn read(&self, timer_reference_number: reference::Number) -> Option<Milliseconds> {
+    fn read(&self, timer_reference_number: ReferenceNumber) -> Option<Milliseconds> {
         self.timer_by_reference_number
             .get(&timer_reference_number)
             .and_then(|weak_timer| weak_timer.upgrade())
@@ -137,21 +137,17 @@ impl Hierarchy {
         destination: Destination,
         timeout: Timeout,
         process_message: Term,
-        process_control_block: &ProcessControlBlock,
+        process: &Process,
         scheduler: &Scheduler,
-    ) -> Result<Term, Alloc> {
+    ) -> AllocResult<Term> {
         let reference_number = scheduler.next_reference_number();
-        let process_reference =
-            process_control_block.reference_from_scheduler(scheduler.id, reference_number)?;
+        let process_reference = process.reference_from_scheduler(scheduler.id, reference_number)?;
         let (heap_fragment_message, heap_fragment) = match timeout {
             Timeout::Message => process_message.clone_to_fragment()?,
             Timeout::TimeoutTuple => {
-                let tag = atom_unchecked("timeout");
-                let process_tuple = process_control_block.tuple_from_slice(&[
-                    tag,
-                    process_reference,
-                    process_message,
-                ])?;
+                let tag = Atom::str_to_term("timeout");
+                let process_tuple =
+                    process.tuple_from_slice(&[tag, process_reference, process_message])?;
 
                 process_tuple.clone_to_fragment()?
             }
@@ -359,7 +355,7 @@ pub enum Timeout {
 struct Timer {
     // Can't be a `Boxed` `LocalReference` `Term` because those are boxed and the original Process
     // could GC the unboxed `LocalReference` `Term`.
-    reference_number: reference::Number,
+    reference_number: ReferenceNumber,
     monotonic_time_milliseconds: Milliseconds,
     destination: Destination,
     message_heap: Mutex<message::HeapFragment>,
@@ -438,7 +434,7 @@ enum Position {
 struct Slot(Vec<Arc<Timer>>);
 
 impl Slot {
-    fn cancel(&mut self, reference_number: reference::Number) -> Option<Arc<Timer>> {
+    fn cancel(&mut self, reference_number: ReferenceNumber) -> Option<Arc<Timer>> {
         self.0
             .iter()
             .position(|timer_rc| timer_rc.reference_number == reference_number)
@@ -533,7 +529,7 @@ impl Wheel {
     fn cancel(
         &mut self,
         slot_index: SlotIndex,
-        reference_number: reference::Number,
+        reference_number: ReferenceNumber,
     ) -> Option<Arc<Timer>> {
         self.slots[slot_index as usize].cancel(reference_number)
     }

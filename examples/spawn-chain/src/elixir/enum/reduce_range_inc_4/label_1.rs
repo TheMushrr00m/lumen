@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use liblumen_alloc::erts::exception::system::Alloc;
+use liblumen_alloc::erts::exception::Alloc;
 use liblumen_alloc::erts::process::code::stack::frame::{Frame, Placement};
 use liblumen_alloc::erts::process::code::{self, result_from_exception};
-use liblumen_alloc::erts::process::ProcessControlBlock;
-use liblumen_alloc::erts::term::{Term, TypedTerm};
+use liblumen_alloc::erts::process::Process;
+use liblumen_alloc::erts::term::prelude::*;
 
 use crate::elixir::r#enum::reduce_range_inc_4::label_2;
 
@@ -17,7 +17,7 @@ use crate::elixir::r#enum::reduce_range_inc_4::label_2;
 /// reduce_range_inc(new_first, last, new_acc, reducer)
 /// ```
 pub fn place_frame_with_arguments(
-    process: &ProcessControlBlock,
+    process: &Process,
     placement: Placement,
     first: Term,
     last: Term,
@@ -33,7 +33,7 @@ pub fn place_frame_with_arguments(
     Ok(())
 }
 
-fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
+fn code(arc_process: &Arc<Process>) -> code::Result {
     arc_process.reduce();
 
     let new_first = arc_process.stack_pop().unwrap();
@@ -45,41 +45,38 @@ fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
     let acc = arc_process.stack_pop().unwrap();
     let reducer = arc_process.stack_pop().unwrap();
 
-    match reducer.to_typed_term().unwrap() {
-        TypedTerm::Boxed(boxed) => match boxed.to_typed_term().unwrap() {
-            TypedTerm::Closure(closure) => {
-                label_2::place_frame_with_arguments(
+    match reducer.decode().unwrap() {
+        TypedTerm::Closure(closure) => {
+            label_2::place_frame_with_arguments(
+                arc_process,
+                Placement::Replace,
+                new_first,
+                last,
+                reducer,
+            )?;
+
+            if closure.arity() == 2 {
+                closure.place_frame_with_arguments(
                     arc_process,
-                    Placement::Replace,
-                    new_first,
-                    last,
-                    reducer,
+                    Placement::Push,
+                    vec![first, acc],
                 )?;
 
-                if closure.arity() == 2 {
-                    closure.place_frame_with_arguments(
-                        arc_process,
-                        Placement::Push,
-                        vec![first, acc],
-                    )?;
+                Process::call_code(arc_process)
+            } else {
+                let argument_list = arc_process.list_from_slice(&[first, acc]).unwrap();
 
-                    ProcessControlBlock::call_code(arc_process)
-                } else {
-                    let argument_list = arc_process.list_from_slice(&[first, acc])?;
-
-                    result_from_exception(
-                        arc_process,
-                        liblumen_alloc::badarity!(arc_process, reducer, argument_list,),
-                    )
-                }
+                result_from_exception(
+                    arc_process,
+                    liblumen_alloc::badarity!(arc_process, reducer, argument_list),
+                )
             }
-            _ => result_from_exception(arc_process, liblumen_alloc::badfun!(arc_process, reducer)),
-        },
+        }
         _ => result_from_exception(arc_process, liblumen_alloc::badfun!(arc_process, reducer)),
     }
 }
 
-fn frame(process: &ProcessControlBlock) -> Frame {
+fn frame(process: &Process) -> Frame {
     let module_function_arity = process.current_module_function_arity().unwrap();
 
     Frame::new(module_function_arity, code)

@@ -15,8 +15,8 @@ fn without_registered_name_returns_reference_but_immediate_sends_noproc_message(
 
         assert!(monitor_reference.is_reference());
 
-        let tag = atom_unchecked("DOWN");
-        let reason = atom_unchecked("noproc");
+        let tag = Atom::str_to_term("DOWN");
+        let reason = Atom::str_to_term("noproc");
 
         assert!(has_message(
             &monitoring_arc_process,
@@ -26,7 +26,7 @@ fn without_registered_name_returns_reference_but_immediate_sends_noproc_message(
                     monitor_reference,
                     r#type(),
                     monitoring_arc_process
-                        .tuple_from_slice(&[registered_name, node_0()])
+                        .tuple_from_slice(&[registered_name, node_0::native()])
                         .unwrap(),
                     reason
                 ])

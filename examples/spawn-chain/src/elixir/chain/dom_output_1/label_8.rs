@@ -1,18 +1,18 @@
+use std::convert::TryInto;
 use std::sync::Arc;
 
-use liblumen_alloc::erts::exception::system::Alloc;
 use liblumen_alloc::erts::process::code::stack::frame::{Frame, Placement};
-use liblumen_alloc::erts::process::{code, ProcessControlBlock};
-use liblumen_alloc::erts::term::Term;
+use liblumen_alloc::erts::process::{code, Process};
+use liblumen_alloc::erts::term::prelude::{Boxed, Resource, Term};
 
 use crate::elixir::chain::dom_output_1::label_9;
 
 pub fn place_frame_with_arguments(
-    process: &ProcessControlBlock,
+    process: &Process,
     placement: Placement,
     document: Term,
     tr: Term,
-) -> Result<(), Alloc> {
+) -> code::Result {
     process.stack_push(tr)?;
     process.stack_push(document)?;
     process.place_frame(frame(process), placement);
@@ -35,30 +35,32 @@ pub fn place_frame_with_arguments(
 /// {:ok, tbody} = Lumen::Web::Document.get_element_by_id(document, "output")
 /// Lumen::Web::Node.append_child(tbody, tr)
 /// ```
-fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
+fn code(arc_process: &Arc<Process>) -> code::Result {
     arc_process.reduce();
 
     let text_text = arc_process.stack_pop().unwrap();
-    assert!(text_text.is_resource_reference());
+    let _: Boxed<Resource> = text_text.try_into().unwrap();
     let document = arc_process.stack_pop().unwrap();
-    assert!(document.is_resource_reference());
+    let _: Boxed<Resource> = document.try_into().unwrap();
     let tr = arc_process.stack_pop().unwrap();
-    assert!(tr.is_resource_reference());
+    let _: Boxed<Resource> = tr.try_into().unwrap();
 
-    label_9::place_frame_with_arguments(arc_process, Placement::Replace, document, tr, text_text)?;
+    label_9::place_frame_with_arguments(arc_process, Placement::Replace, document, tr, text_text)
+        .unwrap();
 
-    let tag = arc_process.binary_from_str("td")?;
+    let tag = arc_process.binary_from_str("td").unwrap();
     lumen_web::document::create_element_2::place_frame_with_arguments(
         arc_process,
         Placement::Push,
         document,
         tag,
-    )?;
+    )
+    .unwrap();
 
-    ProcessControlBlock::call_code(arc_process)
+    Process::call_code(arc_process)
 }
 
-fn frame(process: &ProcessControlBlock) -> Frame {
+fn frame(process: &Process) -> Frame {
     let module_function_arity = process.current_module_function_arity().unwrap();
 
     Frame::new(module_function_arity, code)

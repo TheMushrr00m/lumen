@@ -14,7 +14,7 @@ fn with_small_integer_subtrahend_with_underflow_returns_big_integer() {
 
         let difference = result.unwrap();
 
-        assert!(difference.is_bigint());
+        assert!(difference.is_boxed_bigint());
     })
 }
 
@@ -31,7 +31,7 @@ fn with_small_integer_subtrahend_with_overflow_returns_big_integer() {
 
         let difference = result.unwrap();
 
-        assert!(difference.is_bigint());
+        assert!(difference.is_boxed_bigint());
     })
 }
 
@@ -61,7 +61,7 @@ fn with_float_subtrahend_with_overflow_returns_max_float() {
 
 fn with<F>(f: F)
 where
-    F: FnOnce(Term, &ProcessControlBlock) -> (),
+    F: FnOnce(Term, &Process) -> (),
 {
     with_process(|process| {
         let minuend = process.integer(2).unwrap();

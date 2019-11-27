@@ -1,82 +1,158 @@
+use core::alloc::Layout;
 use core::cmp;
-use core::convert::{TryFrom, TryInto};
+use core::convert::TryFrom;
 use core::default::Default;
 use core::fmt::{self, Display};
 use core::hash::{Hash, Hasher};
-use core::ptr;
+
+use alloc::sync::Arc;
 
 use liblumen_core::locks::RwLock;
 
 use lazy_static::lazy_static;
+use thiserror::Error;
 
 use crate::borrow::CloneToProcess;
-use crate::erts::exception::system::Alloc;
-use crate::erts::term::{arity_of, AsTerm, Term, TypeError, TypedTerm};
-use crate::erts::{HeapAlloc, Node};
-use crate::mem::bit_size_of;
+use crate::erts::exception::AllocResult;
+use crate::erts::node::Node;
+use crate::erts::process::alloc::TermAlloc;
+use crate::erts::term::prelude::*;
 
-/// Generates the next `Pid`.  `Pid`s are not reused for the lifetime of the VM.
-pub fn next() -> Pid {
-    let mut writable_counter = RW_LOCK_COUNTER.write();
+lazy_static! {
+    static ref RW_LOCK_COUNTER: RwLock<Counter> = Default::default();
+}
 
-    writable_counter.next()
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum AnyPid {
+    Local(Pid),
+    External(Boxed<ExternalPid>),
+}
+impl Display for AnyPid {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            AnyPid::Local(pid) => write!(f, "{}", pid),
+            AnyPid::External(pid) => write!(f, "{}", pid.as_ref()),
+        }
+    }
+}
+impl CloneToProcess for AnyPid {
+    fn clone_to_heap<A>(&self, heap: &mut A) -> AllocResult<Term>
+    where
+        A: ?Sized + TermAlloc,
+    {
+        match self {
+            AnyPid::Local(pid) => Ok(pid.encode().unwrap()),
+            AnyPid::External(pid) => pid.clone_to_heap(heap),
+        }
+    }
+
+    fn size_in_words(&self) -> usize {
+        match self {
+            AnyPid::Local(_pid) => 1,
+            AnyPid::External(pid) => pid.size_in_words(),
+        }
+    }
+}
+impl TryFrom<TypedTerm> for AnyPid {
+    type Error = TypeError;
+
+    fn try_from(typed_term: TypedTerm) -> Result<Self, Self::Error> {
+        match typed_term {
+            TypedTerm::Pid(pid) => Ok(AnyPid::Local(pid)),
+            TypedTerm::ExternalPid(pid) => Ok(AnyPid::External(pid)),
+            _ => Err(TypeError),
+        }
+    }
+}
+impl From<Pid> for AnyPid {
+    fn from(pid: Pid) -> Self {
+        AnyPid::Local(pid)
+    }
+}
+impl From<Boxed<ExternalPid>> for AnyPid {
+    fn from(pid: Boxed<ExternalPid>) -> Self {
+        AnyPid::External(pid)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct Pid(usize);
 impl Pid {
+    const NUMBER_BIT_COUNT: u8 = 15;
+    const NUMBER_MASK: usize = 0b111_1111_1111_1111;
+
+    // The serial bit count is always 13 bits even though more could fit because they must be able
+    // to fit in the PID_EXT and NEW_PID_EXT external term formats.
+    const SERIAL_BIT_COUNT: u8 = 13;
+    const SERIAL_MASK: usize = (0b1_1111_1111_1111) << Self::NUMBER_BIT_COUNT;
+
+    pub const NUMBER_MAX: usize = (1 << (Self::NUMBER_BIT_COUNT as usize)) - 1;
+    pub const SERIAL_MAX: usize = (1 << (Self::SERIAL_BIT_COUNT as usize)) - 1;
+    pub const SIZE_IN_WORDS: usize = 1;
+
+    /// Generates the next `Pid`.
+    ///
+    /// `Pid`s are not reused for the lifetime of the VM.
+    pub fn next() -> Pid {
+        let mut writable_counter = RW_LOCK_COUNTER.write();
+
+        writable_counter.next()
+    }
+
+    /// Same as `next`, but directly encodes to `Term`
+    pub fn next_term() -> Term {
+        Self::next().encode().unwrap()
+    }
+
     /// Given a the raw pid value (as a usize), reifies it into a `Pid`
     #[inline]
     pub unsafe fn from_raw(pid: usize) -> Self {
         Self(pid)
     }
 
-    pub fn new(number: usize, serial: usize) -> Result<Pid, OutOfRange> {
+    pub fn new(number: usize, serial: usize) -> Result<Pid, InvalidPidError> {
         Self::check(number, serial)
             .map(|(number, serial)| unsafe { Self::new_unchecked(number, serial) })
-    }
-
-    pub fn check(number: usize, serial: usize) -> Result<(usize, usize), OutOfRange> {
-        if number <= Self::NUMBER_MAX {
-            if serial <= Self::SERIAL_MAX {
-                Ok((number, serial))
-            } else {
-                Err(OutOfRange::Serial)
-            }
-        } else {
-            Err(OutOfRange::Number)
-        }
     }
 
     unsafe fn new_unchecked(number: usize, serial: usize) -> Pid {
         Self::from_raw((serial << (Self::NUMBER_BIT_COUNT as usize)) | number)
     }
 
-    pub fn number(&self) -> usize {
-        self.0 & Self::NUMBER_MASK
+    /// Same as `new`, but directly encodes to `Term`
+    pub fn make_term(number: usize, serial: usize) -> Result<Term, InvalidPidError> {
+        let pid = Self::new(number, serial)?;
+        Ok(pid.encode().unwrap())
     }
 
-    pub fn serial(&self) -> usize {
-        (self.0 & Self::SERIAL_MASK) >> Self::NUMBER_BIT_COUNT
+    pub fn check(number: usize, serial: usize) -> Result<(usize, usize), InvalidPidError> {
+        if number <= Self::NUMBER_MAX {
+            if serial <= Self::SERIAL_MAX {
+                Ok((number, serial))
+            } else {
+                Err(InvalidPidError::Serial)
+            }
+        } else {
+            Err(InvalidPidError::Number)
+        }
     }
 
-    const NUMBER_BIT_COUNT: u8 = 15;
-    const NUMBER_MASK: usize = 0b111_1111_1111_1111;
-    pub const NUMBER_MAX: usize = (1 << (Self::NUMBER_BIT_COUNT as usize)) - 1;
+    /// Never exceeds 15 significant bits to remain compatible with `PID_EXT` and
+    /// `NEW_PID_EXT` external term formats.
+    pub fn number(&self) -> u16 {
+        (self.0 & Self::NUMBER_MASK) as u16
+    }
 
-    const SERIAL_BIT_COUNT: u8 =
-        (bit_size_of::<usize>() - (Self::NUMBER_BIT_COUNT as usize) - 7) as u8;
-    const SERIAL_MASK: usize = !Self::NUMBER_MASK;
-    pub const SERIAL_MAX: usize = (1 << (Self::SERIAL_BIT_COUNT as usize)) - 1;
+    /// Never exceeds 15 significant bits to remain compatible with `PID_EXT` and `NEW_PID_EXT`
+    /// external term formats.
+    pub fn serial(&self) -> u16 {
+        ((self.0 & Self::SERIAL_MASK) >> Self::NUMBER_BIT_COUNT) as u16
+    }
 
-    pub const SIZE_IN_WORDS: usize = 1;
-}
-
-unsafe impl AsTerm for Pid {
-    #[inline]
-    unsafe fn as_term(&self) -> Term {
-        Term::make_pid(self.0)
+    #[inline(always)]
+    pub fn as_usize(self) -> usize {
+        self.0
     }
 }
 
@@ -87,8 +163,23 @@ impl Display for Pid {
 }
 
 impl PartialEq<ExternalPid> for Pid {
-    #[inline]
+    #[inline(always)]
     fn eq(&self, _other: &ExternalPid) -> bool {
+        false
+    }
+}
+impl<T> PartialEq<Boxed<T>> for Pid
+where
+    T: PartialEq<Pid>,
+{
+    #[inline]
+    default fn eq(&self, other: &Boxed<T>) -> bool {
+        other.as_ref().eq(self)
+    }
+}
+impl PartialEq<Boxed<ExternalPid>> for Pid {
+    #[inline(always)]
+    fn eq(&self, _other: &Boxed<ExternalPid>) -> bool {
         false
     }
 }
@@ -98,108 +189,15 @@ impl PartialOrd<ExternalPid> for Pid {
         self.partial_cmp(&other.pid)
     }
 }
-
-pub struct ExternalPid {
-    header: Term,
-    node: Node,
-    next: *mut u8, // off heap header
-    pid: Pid,
-}
-impl ExternalPid {
-    pub(in crate::erts) fn with_node_id(
-        node_id: usize,
-        number: usize,
-        serial: usize,
-    ) -> Result<Self, OutOfRange> {
-        let node = Node::new(node_id);
-
-        Self::new(node, number, serial)
-    }
-
-    fn new(node: Node, number: usize, serial: usize) -> Result<Self, OutOfRange> {
-        let pid = Pid::new(number, serial)?;
-        let header = Term::make_header(arity_of::<Self>(), Term::FLAG_EXTERN_PID);
-
-        Ok(Self {
-            header,
-            node,
-            next: ptr::null_mut(),
-            pid,
-        })
-    }
-}
-
-unsafe impl AsTerm for ExternalPid {
+impl<T> PartialOrd<Boxed<T>> for Pid
+where
+    T: PartialOrd<Pid>,
+{
     #[inline]
-    unsafe fn as_term(&self) -> Term {
-        Term::make_boxed(self as *const Self)
+    fn partial_cmp(&self, other: &Boxed<T>) -> Option<cmp::Ordering> {
+        other.as_ref().partial_cmp(self).map(|o| o.reverse())
     }
 }
-
-impl CloneToProcess for ExternalPid {
-    fn clone_to_heap<A: HeapAlloc>(&self, heap: &mut A) -> Result<Term, Alloc> {
-        unsafe {
-            let ptr = heap.alloc(self.size_in_words())?.as_ptr() as *mut Self;
-            ptr::copy_nonoverlapping(self as *const Self, ptr, 1);
-
-            Ok(Term::make_boxed(ptr))
-        }
-    }
-}
-
-impl Display for ExternalPid {
-    fn fmt(&self, _f: &mut fmt::Formatter) -> fmt::Result {
-        unimplemented!()
-    }
-}
-
-impl Eq for ExternalPid {}
-
-impl Hash for ExternalPid {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.node.hash(state);
-        self.pid.hash(state);
-    }
-}
-
-impl Ord for ExternalPid {
-    fn cmp(&self, other: &ExternalPid) -> cmp::Ordering {
-        self.node
-            .cmp(&other.node)
-            .then_with(|| self.pid.cmp(&other.pid))
-    }
-}
-
-impl PartialEq<ExternalPid> for ExternalPid {
-    fn eq(&self, other: &ExternalPid) -> bool {
-        self.node == other.node && self.pid == other.pid
-    }
-}
-
-impl PartialOrd<ExternalPid> for ExternalPid {
-    fn partial_cmp(&self, other: &ExternalPid) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl fmt::Debug for ExternalPid {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("ExternalPid")
-            .field("header", &format_args!("{:#b}", &self.header.as_usize()))
-            .field("node", &self.node)
-            .field("next", &self.next)
-            .field("pid", &self.pid)
-            .finish()
-    }
-}
-
-impl TryFrom<Term> for Pid {
-    type Error = TypeError;
-
-    fn try_from(term: Term) -> Result<Self, Self::Error> {
-        term.to_typed_term().unwrap().try_into()
-    }
-}
-
 impl TryFrom<TypedTerm> for Pid {
     type Error = TypeError;
 
@@ -211,9 +209,129 @@ impl TryFrom<TypedTerm> for Pid {
     }
 }
 
-#[derive(Debug)]
-pub enum OutOfRange {
+#[derive(Debug, Clone)]
+#[repr(C)]
+pub struct ExternalPid {
+    header: Header<ExternalPid>,
+    arc_node: Arc<Node>,
+    pid: Pid,
+}
+impl_static_header!(ExternalPid, Term::HEADER_EXTERN_PID);
+impl ExternalPid {
+    pub fn new(arc_node: Arc<Node>, number: usize, serial: usize) -> Result<Self, InvalidPidError> {
+        let pid = Pid::new(number, serial)?;
+
+        Ok(Self {
+            header: Default::default(),
+            arc_node,
+            pid,
+        })
+    }
+
+    pub fn arc_node(&self) -> Arc<Node> {
+        self.arc_node.clone()
+    }
+
+    pub fn number(&self) -> u16 {
+        self.pid.number()
+    }
+
+    pub fn serial(&self) -> u16 {
+        self.pid.serial()
+    }
+}
+
+impl CloneToProcess for ExternalPid {
+    fn clone_to_heap<A>(&self, heap: &mut A) -> AllocResult<Term>
+    where
+        A: ?Sized + TermAlloc,
+    {
+        unsafe {
+            let layout = Layout::new::<Self>();
+            let ptr = heap.alloc_layout(layout)?.as_ptr() as *mut Self;
+            ptr.write(self.clone());
+
+            Ok(ptr.into())
+        }
+    }
+
+    fn size_in_words(&self) -> usize {
+        crate::erts::to_word_size(Layout::for_value(self).size())
+    }
+}
+
+impl Display for ExternalPid {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "<{}.{}.{}>",
+            self.arc_node.id(),
+            self.pid.number(),
+            self.pid.serial()
+        )
+    }
+}
+
+impl Hash for ExternalPid {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.arc_node.hash(state);
+        self.pid.hash(state);
+    }
+}
+
+impl Eq for ExternalPid {}
+impl PartialEq for ExternalPid {
+    fn eq(&self, other: &ExternalPid) -> bool {
+        self.arc_node == other.arc_node && self.pid == other.pid
+    }
+}
+impl<T> PartialEq<Boxed<T>> for ExternalPid
+where
+    T: PartialEq<ExternalPid>,
+{
+    #[inline]
+    fn eq(&self, other: &Boxed<T>) -> bool {
+        other.as_ref().eq(self)
+    }
+}
+
+impl Ord for ExternalPid {
+    fn cmp(&self, other: &ExternalPid) -> cmp::Ordering {
+        self.arc_node
+            .cmp(&other.arc_node)
+            .then_with(|| self.pid.cmp(&other.pid))
+    }
+}
+impl PartialOrd for ExternalPid {
+    fn partial_cmp(&self, other: &ExternalPid) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl<T> PartialOrd<Boxed<T>> for ExternalPid
+where
+    T: PartialOrd<ExternalPid>,
+{
+    #[inline]
+    fn partial_cmp(&self, other: &Boxed<T>) -> Option<cmp::Ordering> {
+        other.as_ref().partial_cmp(self).map(|o| o.reverse())
+    }
+}
+impl TryFrom<TypedTerm> for Boxed<ExternalPid> {
+    type Error = TypeError;
+
+    fn try_from(typed_term: TypedTerm) -> Result<Self, Self::Error> {
+        match typed_term {
+            TypedTerm::ExternalPid(pid) => Ok(pid),
+            _ => Err(TypeError),
+        }
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum InvalidPidError {
+    #[error("invalid pid: number out of range")]
     Number,
+    #[error("invalid pid: serial out of range")]
     Serial,
 }
 
@@ -246,10 +364,6 @@ impl Counter {
 
         local_pid
     }
-}
-
-lazy_static! {
-    static ref RW_LOCK_COUNTER: RwLock<Counter> = Default::default();
 }
 
 #[cfg(test)]

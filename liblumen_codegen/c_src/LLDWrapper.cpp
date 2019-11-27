@@ -1,6 +1,9 @@
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-parameter"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/raw_ostream.h"
 #include "lld/Common/Driver.h"
+#pragma clang diagnostic pop
 
 using namespace llvm;
 

@@ -11,9 +11,9 @@ use wasm_bindgen::JsCast;
 
 use web_sys::{Event, EventTarget, Window};
 
-use liblumen_alloc::erts::exception::system::Alloc;
-use liblumen_alloc::erts::process::ProcessControlBlock;
-use liblumen_alloc::erts::term::{atom_unchecked, Atom, Term};
+use liblumen_alloc::erts::process::code;
+use liblumen_alloc::erts::process::Process;
+use liblumen_alloc::erts::term::prelude::*;
 
 use lumen_runtime::process::spawn::options::Options;
 
@@ -25,7 +25,7 @@ pub fn add_event_listener<F>(
     options: Options,
     place_frame_with_arguments: F,
 ) where
-    F: Fn(&ProcessControlBlock, Term) -> Result<(), Alloc> + 'static,
+    F: Fn(&Process, Term) -> code::Result + 'static,
 {
     let f = Rc::new(RefCell::new(None));
     let g = f.clone();
@@ -33,13 +33,13 @@ pub fn add_event_listener<F>(
     let event_listener = move |event: &Event| {
         event.prevent_default();
 
-        let promise = wait::with_return_0::spawn(options, |child_process| {
+        wait::with_return_0::spawn(options, |child_process| {
             // put reference to this closure into process dictionary so that it can't be GC'd until
             // `child_process` exits and is `Drop`'d.
             let event_listener_resource_reference = child_process.resource(Box::new(f.clone()))?;
             child_process
                 .put(
-                    atom_unchecked("Elixir.Lumen.Web.Window.event_listener"),
+                    Atom::str_to_term("Elixir.Lumen.Web.Window.event_listener"),
                     event_listener_resource_reference,
                 )
                 .unwrap();
@@ -48,9 +48,7 @@ pub fn add_event_listener<F>(
 
             place_frame_with_arguments(child_process, event_resource_reference)
         })
-        .unwrap();
-
-        promise
+        .unwrap()
     };
 
     let event_listener_box: Box<dyn FnMut(&Event) -> js_sys::Promise> = Box::new(event_listener);

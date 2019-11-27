@@ -1,7 +1,7 @@
-#[path = "./body_1/without_body.rs"]
+#[path = "body_1/without_body.rs"]
 mod without_body;
 
-#[path = "./body_1/with_body.rs"]
+#[path = "body_1/with_body.rs"]
 mod with_body;
 
 use super::*;
@@ -10,7 +10,7 @@ use js_sys::{Reflect, Symbol};
 
 use wasm_bindgen::JsCast;
 
-use liblumen_alloc::erts::term::Atom;
+use liblumen_alloc::erts::term::prelude::Atom;
 
 use lumen_web::{document, window};
 
@@ -42,7 +42,7 @@ fn without_body() -> impl Future<Item = (), Error = JsValue> {
         // # full stack: ()
         // # returns: {:ok, document}
         // ```
-        document::new_0::place_frame(child_process, Placement::Push);
+        document::new_0::place_frame_with_arguments(child_process, Placement::Push)?;
 
         Ok(())
     })
@@ -86,7 +86,7 @@ fn with_body() -> impl Future<Item = (), Error = JsValue> {
         // # full stack: ()
         // # returns: {:ok, window}
         // ```
-        window::window_0::place_frame(child_process, Placement::Push);
+        window::window_0::place_frame_with_arguments(child_process, Placement::Push)?;
 
         Ok(())
     })

@@ -40,7 +40,7 @@ fn with_small_integer_addend_returns_float() {
 
                     let sum = result.unwrap();
 
-                    prop_assert!(sum.is_float());
+                    prop_assert!(sum.is_boxed_float());
 
                     Ok(())
                 },
@@ -65,7 +65,7 @@ fn with_big_integer_addend_returns_float() {
 
                     let sum = result.unwrap();
 
-                    prop_assert!(sum.is_float());
+                    prop_assert!(sum.is_boxed_float());
 
                     Ok(())
                 },
@@ -101,7 +101,7 @@ fn with_float_addend_without_underflow_or_overflow_returns_float() {
 
                     let sum = result.unwrap();
 
-                    prop_assert!(sum.is_float());
+                    prop_assert!(sum.is_boxed_float());
 
                     Ok(())
                 },
@@ -136,7 +136,7 @@ fn with_float_addend_with_overflow_returns_max_float() {
 
 fn with<F>(f: F)
 where
-    F: FnOnce(Term, &ProcessControlBlock) -> (),
+    F: FnOnce(Term, &Process) -> (),
 {
     with_process(|process| {
         let augend = process.float(2.0).unwrap();

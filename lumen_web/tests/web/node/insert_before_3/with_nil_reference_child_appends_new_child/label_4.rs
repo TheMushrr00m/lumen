@@ -1,10 +1,10 @@
 use std::convert::TryInto;
 use std::sync::Arc;
 
-use liblumen_alloc::erts::exception::system::Alloc;
+use liblumen_alloc::erts::exception::Alloc;
 use liblumen_alloc::erts::process::code::stack::frame::{Frame, Placement};
-use liblumen_alloc::erts::process::{code, ProcessControlBlock};
-use liblumen_alloc::erts::term::{atom_unchecked, resource, Term};
+use liblumen_alloc::erts::process::{code, Process};
+use liblumen_alloc::erts::term::prelude::*;
 use liblumen_alloc::ModuleFunctionArity;
 
 use web_sys::Element;
@@ -12,7 +12,7 @@ use web_sys::Element;
 use super::label_5;
 
 pub fn place_frame_with_arguments(
-    process: &ProcessControlBlock,
+    process: &Process,
     placement: Placement,
     document: Term,
     parent: Term,
@@ -38,20 +38,21 @@ pub fn place_frame_with_arguments(
 // {:ok, new_child} = Lumen.Web.Document.create_element(document, "ul");
 // {:ok, inserted_child} = Lumen.Web.insert_before(parent, new_child, nil)
 // ```
-fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
+fn code(arc_process: &Arc<Process>) -> code::Result {
     arc_process.reduce();
 
     let ok = arc_process.stack_pop().unwrap();
-    assert_eq!(ok, atom_unchecked("ok"));
+    assert_eq!(ok, Atom::str_to_term("ok"));
 
     let document = arc_process.stack_pop().unwrap();
-    assert!(document.is_resource_reference());
+    assert!(document.is_boxed_resource_reference());
 
     let parent = arc_process.stack_pop().unwrap();
-    assert!(parent.is_resource_reference());
+    assert!(parent.is_boxed_resource_reference());
 
     let existing_child = arc_process.stack_pop().unwrap();
-    let existing_child_reference: resource::Reference = existing_child.try_into().unwrap();
+    let existing_child_ref: Boxed<Resource> = existing_child.try_into().unwrap();
+    let existing_child_reference: Resource = existing_child_ref.into();
     let _: &Element = existing_child_reference.downcast_ref().unwrap();
 
     label_5::place_frame_with_arguments(arc_process, Placement::Replace, document, parent)?;
@@ -63,7 +64,7 @@ fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
         existing_child,
     )?;
 
-    ProcessControlBlock::call_code(arc_process)
+    Process::call_code(arc_process)
 }
 
 fn frame() -> Frame {

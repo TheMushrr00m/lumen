@@ -2,11 +2,11 @@ use std::convert::TryInto;
 use std::sync::Arc;
 
 use liblumen_alloc::erts::process::code::stack::frame::{Frame, Placement};
-use liblumen_alloc::erts::process::{code, ProcessControlBlock};
-use liblumen_alloc::erts::term::{atom_unchecked, Boxed, Tuple};
+use liblumen_alloc::erts::process::{code, Process};
+use liblumen_alloc::erts::term::prelude::*;
 use liblumen_alloc::ModuleFunctionArity;
 
-pub fn place_frame(process: &ProcessControlBlock, placement: Placement) {
+pub fn place_frame(process: &Process, placement: Placement) {
     process.place_frame(frame(), placement);
 }
 
@@ -21,16 +21,20 @@ pub fn place_frame(process: &ProcessControlBlock, placement: Placement) {
 // class_name = Lumen.Web.Element.class_name(body)
 // Lumen.Web.Wait.with_return(class_name)
 // ```
-fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
+fn code(arc_process: &Arc<Process>) -> code::Result {
     arc_process.reduce();
 
     let ok_body = arc_process.stack_pop().unwrap();
-    assert!(ok_body.is_tuple(), "ok_body ({:?}) is not a tuple", ok_body);
+    assert!(
+        ok_body.is_boxed_tuple(),
+        "ok_body ({:?}) is not a tuple",
+        ok_body
+    );
     let ok_body_tuple: Boxed<Tuple> = ok_body.try_into().unwrap();
     assert_eq!(ok_body_tuple.len(), 2);
-    assert_eq!(ok_body_tuple[0], atom_unchecked("ok"));
+    assert_eq!(ok_body_tuple[0], Atom::str_to_term("ok"));
     let body = ok_body_tuple[1];
-    assert!(body.is_resource_reference());
+    assert!(body.is_boxed_resource_reference());
 
     lumen_web::element::class_name_1::place_frame_with_arguments(
         arc_process,
@@ -38,7 +42,7 @@ fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
         body,
     )?;
 
-    ProcessControlBlock::call_code(arc_process)
+    Process::call_code(arc_process)
 }
 
 fn frame() -> Frame {

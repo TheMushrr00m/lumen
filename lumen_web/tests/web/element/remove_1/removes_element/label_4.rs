@@ -1,10 +1,10 @@
 use std::convert::TryInto;
 use std::sync::Arc;
 
-use liblumen_alloc::erts::exception::system::Alloc;
+use liblumen_alloc::erts::exception::Alloc;
 use liblumen_alloc::erts::process::code::stack::frame::{Frame, Placement};
-use liblumen_alloc::erts::process::{code, ProcessControlBlock};
-use liblumen_alloc::erts::term::{atom_unchecked, resource, Boxed, Term, Tuple};
+use liblumen_alloc::erts::process::{code, Process};
+use liblumen_alloc::erts::term::prelude::*;
 use liblumen_alloc::ModuleFunctionArity;
 
 use web_sys::Element;
@@ -12,11 +12,11 @@ use web_sys::Element;
 use super::label_5;
 
 pub fn place_frame_with_arguments(
-    process: &ProcessControlBlock,
+    process: &Process,
     placement: Placement,
     body: Term,
 ) -> Result<(), Alloc> {
-    assert!(body.is_resource_reference());
+    assert!(body.is_boxed_resource_reference());
     process.stack_push(body)?;
     process.place_frame(frame(), placement);
 
@@ -35,24 +35,25 @@ pub fn place_frame_with_arguments(
 // remove_ok = Lumen.Web.Element.remove(child);
 // Lumen.Web.Wait.with_return(remove_ok)
 // ```
-fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
+fn code(arc_process: &Arc<Process>) -> code::Result {
     arc_process.reduce();
 
     let ok_child = arc_process.stack_pop().unwrap();
     assert!(
-        ok_child.is_tuple(),
+        ok_child.is_boxed_tuple(),
         "ok_child ({:?}) is not a tuple",
         ok_child
     );
     let ok_child_tuple: Boxed<Tuple> = ok_child.try_into().unwrap();
     assert_eq!(ok_child_tuple.len(), 2);
-    assert_eq!(ok_child_tuple[0], atom_unchecked("ok"));
+    assert_eq!(ok_child_tuple[0], Atom::str_to_term("ok"));
     let child = ok_child_tuple[1];
-    let child_reference: resource::Reference = child.try_into().unwrap();
+    let child_ref_boxed: Boxed<Resource> = child.try_into().unwrap();
+    let child_reference: Resource = child_ref_boxed.into();
     let _: &Element = child_reference.downcast_ref().unwrap();
 
     let body = arc_process.stack_pop().unwrap();
-    assert!(body.is_resource_reference());
+    assert!(body.is_boxed_resource_reference());
 
     label_5::place_frame_with_arguments(arc_process, Placement::Replace, child)?;
 
@@ -63,7 +64,7 @@ fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
         child,
     )?;
 
-    ProcessControlBlock::call_code(arc_process)
+    Process::call_code(arc_process)
 }
 
 fn frame() -> Frame {

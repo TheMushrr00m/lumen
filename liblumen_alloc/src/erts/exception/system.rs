@@ -1,25 +1,36 @@
-use core::fmt::{self, Debug};
+use core::convert::Infallible;
+use core::mem;
 
-#[derive(Debug, PartialEq)]
-pub enum Exception {
-    Alloc(Alloc),
+use thiserror::Error;
+
+use crate::erts::term::prelude::{TermDecodingError, TermEncodingError};
+
+#[derive(Error, Debug, Clone)]
+pub enum SystemException {
+    #[error("allocation failed")]
+    Alloc(#[from] super::Alloc),
+    #[error("term encoding failed: {0:?}")]
+    TermEncodingFailed(#[from] TermEncodingError),
+    #[error("term encoding failed: {0:?}")]
+    TermDecodingFailed(#[from] TermDecodingError),
+    #[error("fatal system error")]
+    Fatal(#[from] super::ArcError),
 }
 
-impl From<Alloc> for Exception {
-    fn from(alloc: Alloc) -> Exception {
-        Exception::Alloc(alloc)
+impl Eq for SystemException {}
+impl PartialEq for SystemException {
+    fn eq(&self, other: &Self) -> bool {
+        mem::discriminant(self) == mem::discriminant(other)
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub struct Alloc {
-    pub file: &'static str,
-    pub line: u32,
-    pub column: u32,
+impl From<Infallible> for SystemException {
+    fn from(_: Infallible) -> Self {
+        unreachable!()
+    }
 }
-
-impl Debug for Alloc {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Alloc at {}:{}:{}", self.file, self.line, self.column)
+impl From<anyhow::Error> for SystemException {
+    fn from(err: anyhow::Error) -> Self {
+        Self::Fatal(err.into())
     }
 }

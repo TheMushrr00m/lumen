@@ -1,24 +1,13 @@
-#[cfg(test)]
 use std::convert::TryInto;
 use std::sync::Arc;
 
 use liblumen_core::locks::RwLock;
 
-#[cfg(test)]
-use liblumen_alloc::erts::exception::runtime;
-use liblumen_alloc::erts::exception::system::Alloc;
-#[cfg(not(test))]
-use liblumen_alloc::erts::exception::Exception;
 use liblumen_alloc::erts::process::code::stack::frame::{Frame, Placement};
 use liblumen_alloc::erts::process::code::{self, Code};
-use liblumen_alloc::erts::process::ProcessControlBlock;
-#[cfg(test)]
-use liblumen_alloc::erts::term::TypedTerm;
-use liblumen_alloc::erts::term::{Atom, Term};
-use liblumen_alloc::ModuleFunctionArity;
-
-#[cfg(test)]
-use crate::otp::erlang;
+use liblumen_alloc::erts::process::Process;
+use liblumen_alloc::erts::term::prelude::*;
+use liblumen_alloc::{Arity, ModuleFunctionArity};
 
 /// Returns the `Code` that should be used in `otp::erlang::spawn_3` to look up and call a known
 /// BIF or user function using the MFA.
@@ -53,12 +42,12 @@ pub fn set_code(code: Code) {
 }
 
 pub fn place_frame_with_arguments(
-    process: &ProcessControlBlock,
+    process: &Process,
     placement: Placement,
     module: Term,
     function: Term,
     arguments: Term,
-) -> Result<(), Alloc> {
+) -> code::Result {
     process.stack_push(arguments)?;
     process.stack_push(function)?;
     process.stack_push(module)?;
@@ -69,34 +58,16 @@ pub fn place_frame_with_arguments(
 
 // Private
 
-/// Treats all MFAs as undefined.
-#[cfg(not(test))]
-fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
-    // arguments are consumed, but unused
-    let module = arc_process.stack_pop().unwrap();
-    let function = arc_process.stack_pop().unwrap();
-    let arguments = arc_process.stack_pop().unwrap();
-    arc_process.reduce();
-
-    match liblumen_alloc::undef!(arc_process, module, function, arguments) {
-        Exception::Runtime(runtime_exception) => {
-            arc_process.exception(runtime_exception);
-
-            Ok(())
-        }
-        Exception::System(system_exception) => Err(system_exception),
-    }
-}
-
-#[cfg(test)]
-pub fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
+/// `module`, `function`, and arity of `argument_list` must have code registered with
+/// `crate::code::export::insert` or returns `undef` exception.
+pub fn code(arc_process: &Arc<Process>) -> code::Result {
     let module = arc_process.stack_pop().unwrap();
     let function = arc_process.stack_pop().unwrap();
     let argument_list = arc_process.stack_pop().unwrap();
 
     let mut argument_vec: Vec<Term> = Vec::new();
 
-    match argument_list.to_typed_term().unwrap() {
+    match argument_list.decode().unwrap() {
         TypedTerm::Nil => (),
         TypedTerm::List(argument_cons) => {
             for result in argument_cons.into_iter() {
@@ -108,36 +79,25 @@ pub fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
         _ => panic!("{:?} is not an argument list", argument_list),
     }
 
-    let arity = argument_vec.len();
-
     let module_atom: Atom = module.try_into().unwrap();
     let function_atom: Atom = function.try_into().unwrap();
+    let arity: Arity = argument_vec.len().try_into().unwrap();
 
-    match module_atom.name() {
-        "erlang" => match function_atom.name() {
-            "+" => match arity {
-                1 => {
-                    erlang::number_or_badarith_1::place_frame_with_arguments(
-                        arc_process,
-                        Placement::Replace,
-                        argument_vec[0],
-                    )?;
+    match crate::code::export::get(&module_atom, &function_atom, arity) {
+        Some(code) => {
+            crate::code::export::place_frame_with_arguments(
+                &arc_process,
+                Placement::Replace,
+                module_atom,
+                function_atom,
+                arity,
+                code,
+                argument_vec,
+            )?;
 
-                    ProcessControlBlock::call_code(arc_process)
-                }
-                _ => undef(arc_process, module, function, argument_list),
-            },
-            "self" => match arity {
-                0 => {
-                    erlang::self_0::place_frame(arc_process, Placement::Replace);
-
-                    ProcessControlBlock::call_code(arc_process)
-                }
-                _ => undef(arc_process, module, function, argument_list),
-            },
-            _ => undef(arc_process, module, function, argument_list),
-        },
-        _ => undef(arc_process, module, function, argument_list),
+            Process::call_code(arc_process)
+        }
+        None => undef(arc_process, module, function, argument_list),
     }
 }
 
@@ -157,19 +117,15 @@ pub(crate) fn module_function_arity() -> Arc<ModuleFunctionArity> {
     })
 }
 
-#[cfg(test)]
 fn undef(
-    arc_process: &Arc<ProcessControlBlock>,
+    arc_process: &Arc<Process>,
     module: Term,
     function: Term,
     arguments: Term,
 ) -> code::Result {
     arc_process.reduce();
     let exception = liblumen_alloc::undef!(arc_process, module, function, arguments);
-    let runtime_exception: runtime::Exception = exception.try_into().unwrap();
-    arc_process.exception(runtime_exception);
-
-    Ok(())
+    code::result_from_exception(arc_process, exception)
 }
 
 lazy_static! {

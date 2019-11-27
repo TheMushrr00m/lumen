@@ -16,7 +16,7 @@ fn with_float_minuend_with_integer_subtrahend_returns_float() {
 
                     let difference = result.unwrap();
 
-                    prop_assert!(difference.is_float());
+                    prop_assert!(difference.is_boxed_float());
 
                     Ok(())
                 },
@@ -41,7 +41,7 @@ fn with_float_minuend_with_float_subtrahend_returns_float() {
 
                     let difference = result.unwrap();
 
-                    prop_assert!(difference.is_float());
+                    prop_assert!(difference.is_boxed_float());
 
                     Ok(())
                 },
@@ -76,7 +76,7 @@ fn with_float_subtrahend_with_overflow_returns_max_float() {
 
 fn with<F>(f: F)
 where
-    F: FnOnce(Term, &ProcessControlBlock) -> (),
+    F: FnOnce(Term, &Process) -> (),
 {
     with_process(|process| {
         let minuend = process.float(2.0).unwrap();

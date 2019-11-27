@@ -1,19 +1,19 @@
-use std::convert::TryInto;
 use std::sync::Arc;
 
-use liblumen_alloc::erts::exception::runtime;
-use liblumen_alloc::erts::exception::system::Alloc;
+use liblumen_alloc::erts::exception::Alloc;
+use liblumen_alloc::erts::exception::Exception;
 use liblumen_alloc::erts::process::code;
 use liblumen_alloc::erts::process::code::stack::frame::{Frame, Placement};
-use liblumen_alloc::erts::process::ProcessControlBlock;
-use liblumen_alloc::erts::term::Term;
-use liblumen_alloc::erts::term::{atom_unchecked, Atom};
+use liblumen_alloc::erts::process::Process;
+use liblumen_alloc::erts::term::prelude::Term;
+use liblumen_alloc::erts::term::prelude::*;
 use liblumen_alloc::erts::ModuleFunctionArity;
 
+use lumen_runtime::binary_to_string::binary_to_string;
 use lumen_runtime::system;
 
 pub fn place_frame_with_arguments(
-    process: &ProcessControlBlock,
+    process: &Process,
     placement: Placement,
     binary: Term,
 ) -> Result<(), Alloc> {
@@ -27,26 +27,29 @@ pub fn place_frame_with_arguments(
 
 // Private
 
-fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
+fn code(arc_process: &Arc<Process>) -> code::Result {
+    arc_process.reduce();
+
     let elixir_string = arc_process.stack_pop().unwrap();
 
-    match elixir_string.try_into(): Result<String, runtime::Exception> {
+    match binary_to_string(elixir_string) {
         Ok(string) => {
             // NOT A DEBUGGING LOG
             system::io::puts(&string);
-            arc_process.reduce();
 
-            let ok = atom_unchecked("ok");
+            let ok = Atom::str_to_term("ok");
             arc_process.return_from_call(ok)?;
 
-            ProcessControlBlock::call_code(arc_process)
+            Process::call_code(arc_process)
         }
-        Err(exception) => {
-            arc_process.reduce();
-            arc_process.exception(exception);
+        Err(exception) => match exception {
+            Exception::Runtime(runtime_exception) => {
+                arc_process.exception(runtime_exception);
 
-            Ok(())
-        }
+                Ok(())
+            }
+            Exception::System(system_exception) => Err(system_exception),
+        },
     }
 }
 

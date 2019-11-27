@@ -12,9 +12,10 @@ use libeir_syntax_erl::ast::Module as ErlAstModule;
 use libeir_syntax_erl::lower_module;
 use libeir_syntax_erl::{Parse, ParseConfig, Parser};
 
-use liblumen_eir_interpreter::{call_erlang, VM};
+use liblumen_eir_interpreter::call_result::call_run_erlang;
+use liblumen_eir_interpreter::VM;
 
-use liblumen_alloc::erts::term::Atom;
+use liblumen_alloc::erts::term::prelude::Atom;
 
 use lumen_runtime::scheduler::Scheduler;
 
@@ -81,7 +82,8 @@ fn main() {
         let config = ParseConfig::default();
         let mut eir_mod = lower_file(file, config).unwrap();
 
-        for fun in eir_mod.functions.values() {
+        for fun_def in eir_mod.function_iter() {
+            let fun = fun_def.function();
             fun.graph_validate_global();
         }
 
@@ -91,8 +93,6 @@ fn main() {
         VM.modules.write().unwrap().register_erlang_module(eir_mod);
     }
 
-    //let int = init_arc_process.integer(5).unwrap();
-    call_erlang(init_arc_process, module, function, &[])
-        .ok()
-        .unwrap();
+    let res = call_run_erlang(init_arc_process, module, function, &[]);
+    println!("Returned with {:?}", res.result);
 }

@@ -6,16 +6,16 @@ mod label_5;
 
 use std::sync::Arc;
 
-use liblumen_alloc::erts::exception::system::Alloc;
+use liblumen_alloc::erts::exception::Alloc;
 use liblumen_alloc::erts::process::code::stack::frame::{Frame, Placement};
-use liblumen_alloc::erts::process::{code, ProcessControlBlock};
-use liblumen_alloc::erts::term::{Atom, Term};
+use liblumen_alloc::erts::process::{code, Process};
+use liblumen_alloc::erts::term::prelude::*;
 use liblumen_alloc::ModuleFunctionArity;
 
 use crate::otp::erlang::monotonic_time_0;
 
 pub fn place_frame_with_arguments(
-    process: &ProcessControlBlock,
+    process: &Process,
     placement: Placement,
     module: Term,
     function: Term,
@@ -41,7 +41,7 @@ pub fn place_frame_with_arguments(
 ///   {time, value}
 /// end
 /// ```
-fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
+fn code(arc_process: &Arc<Process>) -> code::Result {
     arc_process.reduce();
 
     let module = arc_process.stack_pop().unwrap();
@@ -55,9 +55,9 @@ fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
         function,
         arguments,
     )?;
-    monotonic_time_0::place_frame(arc_process, Placement::Push);
+    monotonic_time_0::place_frame_with_arguments(arc_process, Placement::Push)?;
 
-    ProcessControlBlock::call_code(arc_process)
+    Process::call_code(arc_process)
 }
 
 fn frame() -> Frame {

@@ -10,16 +10,17 @@ use hashbrown::HashMap;
 
 use liblumen_core::locks::{Mutex, RwLock};
 
-use liblumen_alloc::erts::exception::system::Alloc;
+use liblumen_alloc::erts::exception::{Result, SystemException};
 use liblumen_alloc::erts::process::code::Code;
 #[cfg(test)]
 use liblumen_alloc::erts::process::Priority;
-use liblumen_alloc::erts::process::{ProcessControlBlock, Status};
+use liblumen_alloc::erts::process::{Process, Status};
 pub use liblumen_alloc::erts::scheduler::{id, ID};
-use liblumen_alloc::erts::term::{reference, Atom, Reference, Term};
+use liblumen_alloc::erts::term::prelude::*;
 
 use crate::process;
-use crate::process::spawn::options::Options;
+use crate::process::spawn;
+use crate::process::spawn::options::{Connection, Options};
 use crate::registry::put_pid_to_process;
 use crate::run::{self, Run};
 use crate::timer::Hierarchy;
@@ -28,7 +29,7 @@ pub trait Scheduled {
     fn scheduler(&self) -> Option<Arc<Scheduler>>;
 }
 
-impl Scheduled for ProcessControlBlock {
+impl Scheduled for Process {
     fn scheduler(&self) -> Option<Arc<Scheduler>> {
         self.scheduler_id()
             .and_then(|scheduler_id| Scheduler::from_id(&scheduler_id))
@@ -47,6 +48,9 @@ pub struct Scheduler {
     // References are always 64-bits even on 32-bit platforms
     reference_count: AtomicU64,
     run_queues: RwLock<run::queues::Queues>,
+    // Non-monotonic unique integers are scoped to the scheduler ID and then use this per-scheduler
+    // `u64`.
+    unique_integer: AtomicU64,
 }
 
 impl Scheduler {
@@ -73,8 +77,12 @@ impl Scheduler {
         })
     }
 
-    pub fn next_reference_number(&self) -> reference::Number {
+    pub fn next_reference_number(&self) -> ReferenceNumber {
         self.reference_count.fetch_add(1, Ordering::SeqCst)
+    }
+
+    pub fn next_unique_integer(&self) -> u64 {
+        self.unique_integer.fetch_add(1, Ordering::SeqCst)
     }
 
     /// > 1. Update reduction counters
@@ -121,14 +129,19 @@ impl Scheduler {
                     // Without this check, a process.exit() from outside the process during WAITING
                     // will return to the Frame that called `process.wait()`
                     if !arc_process.is_exiting() {
-                        match ProcessControlBlock::run(&arc_process) {
+                        match Process::run(&arc_process) {
                             Ok(()) => (),
-                            Err(exception) => unimplemented!(
-                                "{:?} {:?}\n{:?}",
-                                arc_process,
-                                exception,
-                                *arc_process.acquire_heap()
-                            ),
+                            Err(exception) => match exception {
+                                SystemException::Alloc(_) => {
+                                    match arc_process.garbage_collect(0, &mut []) {
+                                        Ok(_freed) => (),
+                                        Err(gc_err) => {
+                                            panic!("fatal garbage collection error: {:?}", gc_err)
+                                        }
+                                    }
+                                }
+                                err => panic!("system error: {}", err),
+                            },
                         }
                     } else {
                         arc_process.reduce()
@@ -164,13 +177,13 @@ impl Scheduler {
     }
 
     #[cfg(test)]
-    pub fn is_run_queued(&self, value: &Arc<ProcessControlBlock>) -> bool {
+    pub fn is_run_queued(&self, value: &Arc<Process>) -> bool {
         self.run_queues.read().contains(value)
     }
 
     /// Returns `true` if `arc_process` was run; otherwise, `false`.
     #[must_use]
-    pub fn run_through(&self, arc_process: &Arc<ProcessControlBlock>) -> bool {
+    pub fn run_through(&self, arc_process: &Arc<Process>) -> bool {
         let ordering = Ordering::SeqCst;
         let reductions_before = arc_process.total_reductions.load(ordering);
 
@@ -188,19 +201,16 @@ impl Scheduler {
         }
     }
 
-    pub fn schedule(
-        self: Arc<Scheduler>,
-        process_control_block: ProcessControlBlock,
-    ) -> Arc<ProcessControlBlock> {
+    pub fn schedule(self: Arc<Scheduler>, process: Process) -> Arc<Process> {
         let mut writable_run_queues = self.run_queues.write();
 
-        process_control_block.schedule_with(self.id);
+        process.schedule_with(self.id);
 
-        let arc_process_control_block = Arc::new(process_control_block);
+        let arc_process = Arc::new(process);
 
-        writable_run_queues.enqueue(Arc::clone(&arc_process_control_block));
+        writable_run_queues.enqueue(Arc::clone(&arc_process));
 
-        arc_process_control_block
+        arc_process
     }
 
     /// Spawns a process with arguments for `apply(module, function, arguments)` on its stack.
@@ -208,33 +218,41 @@ impl Scheduler {
     /// This allows the `apply/3` code to be changed with `apply_3::set_code(code)` to handle new
     /// MFA unique to a given application.
     pub fn spawn_apply_3(
-        parent_process: &ProcessControlBlock,
+        parent_process: &Process,
         options: Options,
         module: Atom,
         function: Atom,
         arguments: Term,
-    ) -> Result<Arc<ProcessControlBlock>, Alloc> {
-        let process =
-            process::spawn::apply_3(parent_process, options, module, function, arguments)?;
+    ) -> Result<Spawned> {
+        let spawn::Spawned {
+            process,
+            connection,
+        } = process::spawn::apply_3(parent_process, options, module, function, arguments)?;
         let arc_scheduler = parent_process.scheduler().unwrap();
         let arc_process = arc_scheduler.schedule(process);
 
         put_pid_to_process(&arc_process);
 
-        Ok(arc_process)
+        Ok(Spawned {
+            arc_process,
+            connection,
+        })
     }
 
     /// Spawns a process with `arguments` on its stack and `code` run with those arguments instead
     /// of passing through `apply/3`.
     pub fn spawn_code(
-        parent_process: &ProcessControlBlock,
+        parent_process: &Process,
         options: Options,
         module: Atom,
         function: Atom,
-        arguments: Vec<Term>,
+        arguments: &[Term],
         code: Code,
-    ) -> Result<Arc<ProcessControlBlock>, Alloc> {
-        let process = process::spawn::code(
+    ) -> Result<Spawned> {
+        let spawn::Spawned {
+            process,
+            connection,
+        } = process::spawn::code(
             Some(parent_process),
             options,
             module,
@@ -247,13 +265,13 @@ impl Scheduler {
 
         put_pid_to_process(&arc_process);
 
-        Ok(arc_process)
+        Ok(Spawned {
+            arc_process,
+            connection,
+        })
     }
 
-    pub fn spawn_init(
-        self: Arc<Scheduler>,
-        minimum_heap_size: usize,
-    ) -> Result<Arc<ProcessControlBlock>, Alloc> {
+    pub fn spawn_init(self: Arc<Scheduler>, minimum_heap_size: usize) -> Result<Arc<Process>> {
         let process = process::init(minimum_heap_size)?;
         let arc_process = Arc::new(process);
         let scheduler_arc_process = Arc::clone(&arc_process);
@@ -270,7 +288,7 @@ impl Scheduler {
         Ok(arc_process)
     }
 
-    pub fn stop_waiting(&self, process: &ProcessControlBlock) {
+    pub fn stop_waiting(&self, process: &Process) {
         self.run_queues.write().stop_waiting(process);
     }
 
@@ -282,6 +300,7 @@ impl Scheduler {
             hierarchy: Default::default(),
             reference_count: AtomicU64::new(0),
             run_queues: Default::default(),
+            unique_integer: AtomicU64::new(0),
         }
     }
 
@@ -332,6 +351,25 @@ impl PartialEq for Scheduler {
     }
 }
 
+pub struct Spawned {
+    pub arc_process: Arc<Process>,
+    #[must_use]
+    pub connection: Connection,
+}
+
+impl Spawned {
+    pub fn to_term(&self, process: &Process) -> Result<Term> {
+        let pid_term = self.arc_process.pid_term();
+
+        match self.connection.monitor_reference {
+            Some(monitor_reference) => process
+                .tuple_from_slice(&[pid_term, monitor_reference])
+                .map_err(|alloc| alloc.into()),
+            None => Ok(pid_term),
+        }
+    }
+}
+
 thread_local! {
   static SCHEDULER: Arc<Scheduler> = Scheduler::registered();
 }
@@ -344,7 +382,7 @@ lazy_static! {
 #[cfg(test)]
 pub fn with_process<F>(f: F)
 where
-    F: FnOnce(&ProcessControlBlock) -> (),
+    F: FnOnce(&Process) -> (),
 {
     f(&process::test(&process::test_init()))
 }
@@ -352,7 +390,7 @@ where
 #[cfg(test)]
 pub fn with_process_arc<F>(f: F)
 where
-    F: FnOnce(Arc<ProcessControlBlock>) -> (),
+    F: FnOnce(Arc<Process>) -> (),
 {
     f(process::test(&process::test_init()))
 }

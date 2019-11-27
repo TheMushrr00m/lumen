@@ -1,6 +1,7 @@
 #![allow(unused)]
 
-use crate::erts::{ProcessControlBlock, Term};
+use crate::erts::term::prelude::Term;
+use crate::erts::Process;
 
 use super::CloneToProcess;
 
@@ -22,14 +23,14 @@ pub enum Cow {
     Owned(Term),
 }
 impl Cow {
-    pub fn clone_to_process(&self, process: &mut ProcessControlBlock) -> Self {
+    pub fn clone_to_process(&self, process: &mut Process) -> Self {
         match *self {
             Self::Borrowed(b) => Self::Borrowed(b),
             Self::Owned(o) => Self::Owned(o.clone_to_process(process)),
         }
     }
 
-    pub fn clone_from(&mut self, source: &Self, process: &mut ProcessControlBlock) {
+    pub fn clone_from(&mut self, source: &Self, process: &mut Process) {
         if let Self::Owned(ref mut dest) = *self {
             if let Self::Owned(ref o) = *source {
                 *dest = o.clone_to_process(process);

@@ -2,13 +2,13 @@ use std::convert::TryInto;
 use std::sync::Arc;
 
 use liblumen_alloc::erts::process::code::stack::frame::{Frame, Placement};
-use liblumen_alloc::erts::process::{code, ProcessControlBlock};
-use liblumen_alloc::erts::term::{atom_unchecked, Boxed, Tuple};
+use liblumen_alloc::erts::process::{code, Process};
+use liblumen_alloc::erts::term::prelude::*;
 use liblumen_alloc::ModuleFunctionArity;
 
 use super::label_2;
 
-pub fn place_frame(process: &ProcessControlBlock, placement: Placement) {
+pub fn place_frame(process: &Process, placement: Placement) {
     process.place_frame(frame(), placement);
 }
 
@@ -25,20 +25,20 @@ pub fn place_frame(process: &ProcessControlBlock, placement: Placement) {
 // :ok = Lumen.Web.Node.append_child(parent, old_child)
 // {:error, :hierarchy_request} = Lumen.Web.replace_child(parent, old_child, parent)
 // ```
-fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
+fn code(arc_process: &Arc<Process>) -> code::Result {
     arc_process.reduce();
 
     let ok_document = arc_process.stack_pop().unwrap();
     assert!(
-        ok_document.is_tuple(),
+        ok_document.is_boxed_tuple(),
         "ok_document ({:?}) is not a tuple",
         ok_document
     );
     let ok_document_tuple: Boxed<Tuple> = ok_document.try_into().unwrap();
     assert_eq!(ok_document_tuple.len(), 2);
-    assert_eq!(ok_document_tuple[0], atom_unchecked("ok"));
+    assert_eq!(ok_document_tuple[0], Atom::str_to_term("ok"));
     let document = ok_document_tuple[1];
-    assert!(document.is_resource_reference());
+    assert!(document.is_boxed_resource_reference());
 
     label_2::place_frame_with_arguments(arc_process, Placement::Replace, document)?;
 
@@ -50,7 +50,7 @@ fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
         old_child_tag,
     )?;
 
-    ProcessControlBlock::call_code(arc_process)
+    Process::call_code(arc_process)
 }
 
 fn frame() -> Frame {

@@ -1,23 +1,23 @@
+use std::convert::TryInto;
 use std::sync::Arc;
 
-use liblumen_alloc::erts::exception::system::Alloc;
 use liblumen_alloc::erts::process::code;
 use liblumen_alloc::erts::process::code::stack::frame::{Frame, Placement};
-use liblumen_alloc::erts::process::ProcessControlBlock;
-use liblumen_alloc::erts::term::Term;
+use liblumen_alloc::erts::process::Process;
+use liblumen_alloc::erts::term::prelude::{Boxed, Closure, Encoded, Term};
 
 use lumen_runtime::otp::erlang;
 
 use crate::elixir::chain::counter_2::label_2;
 
 pub fn place_frame_with_arguments(
-    process: &ProcessControlBlock,
+    process: &Process,
     placement: Placement,
     next_pid: Term,
     output: Term,
-) -> Result<(), Alloc> {
+) -> code::Result {
     assert!(next_pid.is_pid());
-    assert!(output.is_function());
+    assert!(output.is_boxed_function());
     process.stack_push(output)?;
     process.stack_push(next_pid)?;
     process.place_frame(frame(process), placement);
@@ -38,7 +38,7 @@ pub fn place_frame_with_arguments(
 ///     output.("sent #{sent} to #{next_pid}")
 /// end
 /// ```
-fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
+fn code(arc_process: &Arc<Process>) -> code::Result {
     arc_process.reduce();
 
     // Because there is a guardless match in the receive block, the first message will always be
@@ -55,7 +55,7 @@ fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
             let next_pid = arc_process.stack_pop().unwrap();
             assert!(next_pid.is_pid());
             let output = arc_process.stack_pop().unwrap();
-            assert!(output.is_function());
+            let _: Boxed<Closure> = output.try_into().unwrap();
 
             // ```elixir
             // # label 2
@@ -66,7 +66,8 @@ fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
             // sent = send(next_pid, sum)
             // output.("send #{sent} to #{next_pid}")
             // ```
-            label_2::place_frame_with_arguments(arc_process, Placement::Replace, next_pid, output)?;
+            label_2::place_frame_with_arguments(arc_process, Placement::Replace, next_pid, output)
+                .unwrap();
 
             // ```elixir
             // # pushed to stack: (n)
@@ -74,17 +75,22 @@ fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
             // # full stack: (n)
             // # returns: sum
             // n + 1
-            let one = arc_process.integer(1)?;
-            erlang::add_2::place_frame_with_arguments(arc_process, Placement::Push, n, one)?;
+            let one = arc_process.integer(1).unwrap();
+            erlang::add_2::place_frame_with_arguments(arc_process, Placement::Push, n, one)
+                .unwrap();
 
-            ProcessControlBlock::call_code(arc_process)
+            Process::call_code(arc_process)
         }
-        None => Ok(Arc::clone(arc_process).wait()),
+        None => {
+            Arc::clone(arc_process).wait();
+
+            Ok(())
+        }
         Some(Err(alloc_err)) => Err(alloc_err.into()),
     }
 }
 
-fn frame(process: &ProcessControlBlock) -> Frame {
+fn frame(process: &Process) -> Frame {
     let module_function_arity = process.current_module_function_arity().unwrap();
 
     Frame::new(module_function_arity, code)

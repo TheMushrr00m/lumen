@@ -3,12 +3,38 @@ use core::convert::{TryFrom, TryInto};
 use num_bigint::BigInt;
 use num_traits::Zero;
 
-use liblumen_alloc::erts::exception::runtime::Exception;
-use liblumen_alloc::erts::exception::system::Alloc;
-use liblumen_alloc::erts::term::{atom_unchecked, Term, TypedTerm};
-use liblumen_alloc::{badarg, ProcessControlBlock};
+use liblumen_alloc::erts::exception::{AllocResult, Exception};
+use liblumen_alloc::erts::term::prelude::*;
+use liblumen_alloc::{badarg, Process};
 
+pub mod datetime;
 pub mod monotonic;
+pub mod system;
+
+// Must be at least a `u64` because `u32` is only ~49 days (`(1 << 32)`)
+pub type Milliseconds = u64;
+pub type Source = fn() -> Milliseconds;
+
+// private
+const MILLISECONDS_PER_SECOND: u64 = 1_000;
+const MICROSECONDS_PER_MILLISECOND: u64 = 1_000;
+const NANOSECONDS_PER_MICROSECOND: u64 = 1_000;
+const NANOSECONDS_PER_MILLISECONDS: u64 =
+    NANOSECONDS_PER_MICROSECOND * MICROSECONDS_PER_MILLISECOND;
+
+pub fn convert_milliseconds(milliseconds: Milliseconds, unit: Unit) -> BigInt {
+    match unit {
+        Unit::Second => (milliseconds / MILLISECONDS_PER_SECOND).into(),
+        Unit::Millisecond => milliseconds.into(),
+        Unit::Microsecond => (milliseconds * MICROSECONDS_PER_MILLISECOND).into(),
+        Unit::Nanosecond => (milliseconds * NANOSECONDS_PER_MILLISECONDS).into(),
+        _ => convert(
+            (milliseconds * NANOSECONDS_PER_MILLISECONDS).into(),
+            Unit::Nanosecond,
+            unit,
+        ),
+    }
+}
 
 pub fn convert(time: BigInt, from_unit: Unit, to_unit: Unit) -> BigInt {
     if from_unit == to_unit {
@@ -61,15 +87,15 @@ impl Unit {
         }
     }
 
-    pub fn to_term(&self, process_control_block: &ProcessControlBlock) -> Result<Term, Alloc> {
+    pub fn to_term(&self, process: &Process) -> AllocResult<Term> {
         match self {
-            Unit::Hertz(hertz) => process_control_block.integer(*hertz),
-            Unit::Second => Ok(atom_unchecked("second")),
-            Unit::Millisecond => Ok(atom_unchecked("millisecond")),
-            Unit::Microsecond => Ok(atom_unchecked("microsecond")),
-            Unit::Nanosecond => Ok(atom_unchecked("nanosecond")),
-            Unit::Native => Ok(atom_unchecked("native")),
-            Unit::PerformanceCounter => Ok(atom_unchecked("perf_counter")),
+            Unit::Hertz(hertz) => process.integer(*hertz),
+            Unit::Second => Ok(Atom::str_to_term("second")),
+            Unit::Millisecond => Ok(Atom::str_to_term("millisecond")),
+            Unit::Microsecond => Ok(Atom::str_to_term("microsecond")),
+            Unit::Nanosecond => Ok(Atom::str_to_term("nanosecond")),
+            Unit::Native => Ok(Atom::str_to_term("native")),
+            Unit::PerformanceCounter => Ok(Atom::str_to_term("perf_counter")),
         }
     }
 }
@@ -77,28 +103,25 @@ impl Unit {
 impl TryFrom<Term> for Unit {
     type Error = Exception;
 
-    fn try_from(term: Term) -> Result<Unit, Exception> {
-        match term.to_typed_term().unwrap() {
+    fn try_from(term: Term) -> Result<Unit, Self::Error> {
+        match term.decode()? {
             TypedTerm::SmallInteger(small_integer) => {
                 let hertz: usize = small_integer.try_into()?;
 
                 if 0 < hertz {
                     Ok(Unit::Hertz(hertz))
                 } else {
-                    Err(badarg!())
+                    Err(badarg!().into())
                 }
             }
-            TypedTerm::Boxed(boxed) => match boxed.to_typed_term().unwrap() {
-                TypedTerm::BigInteger(big_integer) => {
-                    let big_integer_usize: usize = big_integer.try_into()?;
+            TypedTerm::BigInteger(big_integer) => {
+                let big_integer_usize: usize = big_integer.try_into()?;
 
-                    Ok(Unit::Hertz(big_integer_usize))
-                }
-                _ => Err(badarg!()),
-            },
+                Ok(Unit::Hertz(big_integer_usize))
+            }
             TypedTerm::Atom(atom) => {
                 let term_string = atom.name();
-                let mut result = Err(badarg!());
+                let mut result = Err(badarg!().into());
 
                 for (s, unit) in [
                     ("second", Unit::Second),
@@ -122,7 +145,7 @@ impl TryFrom<Term> for Unit {
 
                 result
             }
-            _ => Err(badarg!()),
+            _ => Err(badarg!().into()),
         }
     }
 }

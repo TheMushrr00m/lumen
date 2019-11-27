@@ -24,16 +24,20 @@ pub fn distance_absolute<T: Sized>(a: *const T, b: *const T) -> usize {
 ///
 /// NOTE: If any of the given pointers are null, then false will be returned
 #[inline]
-pub fn in_area<T, U>(ptr: *const T, start: *const U, end: *const U) -> bool {
+pub fn in_area<T, U>(ptr: *const T, start: *const U, end: *const U) -> bool
+where
+    T: ?Sized,
+    U: ?Sized,
+{
     // If any pointers are null, the only sensible answer is false
     if ptr.is_null() || start.is_null() || end.is_null() {
         false
     } else {
-        debug_assert!(start as usize <= end as usize);
+        let start = start as *const () as usize;
+        let end = end as *const () as usize;
+        debug_assert!(start <= end);
 
-        let start = start as usize;
-        let end = end as usize;
-        let ptr = ptr as usize;
+        let ptr = ptr as *const () as usize;
         start <= ptr && ptr < end
     }
 }
@@ -43,16 +47,20 @@ pub fn in_area<T, U>(ptr: *const T, start: *const U, end: *const U) -> bool {
 ///
 /// NOTE: If any of the given pointers are null, then false will be returned
 #[inline]
-pub fn in_area_inclusive<T, U>(ptr: *const T, start: *const U, end: *const U) -> bool {
+pub fn in_area_inclusive<T, U>(ptr: *const T, start: *const U, end: *const U) -> bool
+where
+    T: ?Sized,
+    U: ?Sized,
+{
     // If any pointers are null, the only sensible answer is false
     if ptr.is_null() || start.is_null() || end.is_null() {
         false
     } else {
-        debug_assert!(start as usize <= end as usize);
+        let start = start as *const () as usize;
+        let end = end as *const () as usize;
+        debug_assert!(start <= end);
 
-        let start = start as usize;
-        let end = end as usize;
-        let ptr = ptr as usize;
+        let ptr = ptr as *const () as usize;
         start <= ptr && ptr <= end
     }
 }
@@ -67,11 +75,7 @@ pub fn in_area_inclusive<T, U>(ptr: *const T, start: *const U, end: *const U) ->
 /// by the given pointers + size in bytes is not allocated. The caller must ensure that
 /// is the case before calling this.
 #[inline]
-pub unsafe fn compare_bytes<T: PartialEq + Sized>(
-    src: *const T,
-    dst: *const T,
-    size: usize,
-) -> bool {
+pub unsafe fn compare_bytes(src: *const u8, dst: *const u8, size: usize) -> bool {
     let lhs = core::slice::from_raw_parts(src, size);
     let rhs = core::slice::from_raw_parts(dst, size);
     lhs.eq(rhs)
@@ -105,15 +109,15 @@ mod tests {
 
     #[test]
     fn test_distance_absolute() {
-        let a = 1 as *const usize;
-        let b = (4 * mem::size_of::<usize>()) as *const usize;
+        let a = 0 as *const usize;
+        let b = (3 * mem::size_of::<usize>()) as *const usize;
         assert_eq!(distance_absolute(a, b), 3);
         assert_eq!(distance_absolute(b, a), 3);
 
         let c = a as *const u8;
         let d = b as *const u8;
-        assert_eq!(distance_absolute(c, d), 4 * mem::size_of::<usize>() - 1);
-        assert_eq!(distance_absolute(d, c), 4 * mem::size_of::<usize>() - 1);
+        assert_eq!(distance_absolute(c, d), 3 * mem::size_of::<usize>());
+        assert_eq!(distance_absolute(d, c), 3 * mem::size_of::<usize>());
 
         let x = 0 as *const usize;
         let y = 0 as *const usize;

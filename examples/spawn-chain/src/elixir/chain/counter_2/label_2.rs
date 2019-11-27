@@ -1,20 +1,20 @@
+use std::convert::TryInto;
 use std::sync::Arc;
 
-use liblumen_alloc::erts::exception::system::Alloc;
 use liblumen_alloc::erts::process::code::stack::frame::{Frame, Placement};
-use liblumen_alloc::erts::process::{code, ProcessControlBlock};
-use liblumen_alloc::erts::term::Term;
+use liblumen_alloc::erts::process::{code, Process};
+use liblumen_alloc::erts::term::prelude::{Boxed, Closure, Encoded, Term};
 
 use lumen_runtime::otp::erlang;
 
 use crate::elixir::chain::counter_2::label_3;
 
 pub fn place_frame_with_arguments(
-    process: &ProcessControlBlock,
+    process: &Process,
     placement: Placement,
     next_pid: Term,
     output: Term,
-) -> Result<(), Alloc> {
+) -> code::Result {
     process.stack_push(output)?;
     process.stack_push(next_pid)?;
     process.place_frame(frame(process), placement);
@@ -33,7 +33,7 @@ pub fn place_frame_with_arguments(
 /// sent = send(next_pid, sum)
 /// output.("sent #{sent} to #{next_pid}")
 /// ```
-fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
+fn code(arc_process: &Arc<Process>) -> code::Result {
     arc_process.reduce();
 
     let sum = arc_process.stack_pop().unwrap();
@@ -41,7 +41,7 @@ fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
     let next_pid = arc_process.stack_pop().unwrap();
     assert!(next_pid.is_pid());
     let output = arc_process.stack_pop().unwrap();
-    assert!(output.is_function());
+    let _: Boxed<Closure> = output.try_into().unwrap();
 
     // ```elixir
     // # label 3
@@ -52,7 +52,7 @@ fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
     // sent = ...
     // output.("sent #{sent} to #{next_pid}")
     // ```
-    label_3::place_frame_with_arguments(arc_process, Placement::Replace, output, next_pid)?;
+    label_3::place_frame_with_arguments(arc_process, Placement::Replace, output, next_pid).unwrap();
 
     // ```elixir
     // # pushed stack: (next_pid, sum)
@@ -60,12 +60,13 @@ fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
     // # full stack: (next_pid, sum)
     // # returns: sent
     // send(next_pid, sum)
-    erlang::send_2::place_frame_with_arguments(arc_process, Placement::Push, next_pid, sum)?;
+    erlang::send_2::place_frame_with_arguments(arc_process, Placement::Push, next_pid, sum)
+        .unwrap();
 
-    ProcessControlBlock::call_code(arc_process)
+    Process::call_code(arc_process)
 }
 
-fn frame(process: &ProcessControlBlock) -> Frame {
+fn frame(process: &Process) -> Frame {
     let module_function_arity = process.current_module_function_arity().unwrap();
 
     Frame::new(module_function_arity, code)

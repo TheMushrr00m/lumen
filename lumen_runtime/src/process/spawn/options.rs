@@ -1,22 +1,29 @@
 use std::convert::{TryFrom, TryInto};
 use std::sync::Arc;
 
-use liblumen_alloc::erts::exception::system::Alloc;
-use liblumen_alloc::erts::exception::Exception;
+use liblumen_alloc::erts::exception::{AllocResult, Exception};
 use liblumen_alloc::erts::process::alloc::{default_heap_size, heap, next_heap_size};
-use liblumen_alloc::erts::process::{Priority, ProcessControlBlock};
-use liblumen_alloc::erts::term::{Atom, Boxed, Cons, Term, Tuple, TypedTerm};
+use liblumen_alloc::erts::process::{Priority, Process};
+use liblumen_alloc::erts::term::prelude::*;
 use liblumen_alloc::{badarg, ModuleFunctionArity};
 
-#[allow(dead_code)]
-#[derive(Clone, Copy)]
+use crate::process;
+
+#[must_use]
+pub struct Connection {
+    pub linked: bool,
+    #[must_use]
+    pub monitor_reference: Option<Term>,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct MaxHeapSize {
     size: Option<usize>,
     kill: Option<bool>,
     error_logger: Option<bool>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum MessageQueueData {
     OnHeap,
     OffHeap,
@@ -42,7 +49,7 @@ impl TryFrom<Term> for MessageQueueData {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Options {
     pub link: bool,
     pub monitor: bool,
@@ -59,16 +66,29 @@ pub struct Options {
 impl Options {
     pub fn connect(
         &self,
-        parent_process: Option<&ProcessControlBlock>,
-        child_process: &ProcessControlBlock,
-    ) {
-        if self.link {
-            parent_process.unwrap().link(child_process)
-        }
+        parent_process: Option<&Process>,
+        child_process: &Process,
+    ) -> AllocResult<Connection> {
+        let linked = if self.link {
+            parent_process.unwrap().link(child_process);
 
-        if self.monitor {
-            unimplemented!()
-        }
+            true
+        } else {
+            false
+        };
+
+        let monitor_reference = if self.monitor {
+            let reference = process::monitor(parent_process.unwrap(), child_process)?;
+
+            Some(reference)
+        } else {
+            None
+        };
+
+        Ok(Connection {
+            linked,
+            monitor_reference,
+        })
     }
 
     /// Creates a new process with the memory and priority options.
@@ -77,11 +97,11 @@ impl Options {
     /// placing any frames in the `child_process` returns from this function.
     pub fn spawn(
         &self,
-        parent_process: Option<&ProcessControlBlock>,
+        parent_process: Option<&Process>,
         module: Atom,
         function: Atom,
         arity: u8,
-    ) -> Result<ProcessControlBlock, Alloc> {
+    ) -> AllocResult<Process> {
         let priority = self.cascaded_priority(parent_process);
         let module_function_arity = Arc::new(ModuleFunctionArity {
             module,
@@ -90,7 +110,7 @@ impl Options {
         });
         let (heap, heap_size) = self.sized_heap()?;
 
-        let process = ProcessControlBlock::new(
+        let process = Process::new(
             priority,
             parent_process.map(|process| process.pid()),
             Arc::clone(&module_function_arity),
@@ -103,7 +123,7 @@ impl Options {
 
     // Private
 
-    fn cascaded_priority(&self, parent_process: Option<&ProcessControlBlock>) -> Priority {
+    fn cascaded_priority(&self, parent_process: Option<&Process>) -> Priority {
         match self.priority {
             Some(priority) => priority,
             None => match parent_process {
@@ -121,7 +141,7 @@ impl Options {
         }
     }
 
-    fn sized_heap(&self) -> Result<(*mut Term, usize), Alloc> {
+    fn sized_heap(&self) -> AllocResult<(*mut Term, usize)> {
         let heap_size = self.heap_size();
         let heap = heap(self.heap_size())?;
 
@@ -145,19 +165,16 @@ impl Options {
     }
 
     fn try_put_option_from_term(&mut self, term: Term) -> bool {
-        match term.to_typed_term().unwrap() {
+        match term.decode().unwrap() {
             TypedTerm::Atom(atom) => self.try_put_option_from_atom(atom),
-            TypedTerm::Boxed(boxed) => match boxed.to_typed_term().unwrap() {
-                TypedTerm::Tuple(tuple) => self.try_put_option_from_tuple(&tuple),
-                _ => false,
-            },
+            TypedTerm::Tuple(tuple) => self.try_put_option_from_tuple(&tuple),
             _ => false,
         }
     }
 
     fn try_put_option_from_tuple(&mut self, tuple: &Tuple) -> bool {
         tuple.len() == 2 && {
-            match tuple[0].to_typed_term().unwrap() {
+            match tuple[0].decode().unwrap() {
                 TypedTerm::Atom(atom) => match atom.name() {
                     "fullsweep_after" => match tuple[1].try_into() {
                         Ok(fullsweep_after) => {
@@ -253,7 +270,7 @@ impl TryFrom<Term> for Options {
     type Error = Exception;
 
     fn try_from(term: Term) -> Result<Self, Self::Error> {
-        match term.to_typed_term().unwrap() {
+        match term.decode().unwrap() {
             TypedTerm::Nil => Ok(Default::default()),
             TypedTerm::List(cons) => cons.try_into(),
             _ => Err(badarg!().into()),

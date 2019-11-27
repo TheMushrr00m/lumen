@@ -5,8 +5,8 @@ use proptest::strategy::{BoxedStrategy, Strategy};
 use proptest::test_runner::{Config, TestRunner};
 
 use liblumen_alloc::badarg;
-use liblumen_alloc::erts::process::ProcessControlBlock;
-use liblumen_alloc::erts::term::{Term, TypedTerm};
+use liblumen_alloc::erts::process::Process;
+use liblumen_alloc::erts::term::prelude::*;
 
 use crate::otp::erlang::demonitor_2::native;
 use crate::scheduler::with_process_arc;

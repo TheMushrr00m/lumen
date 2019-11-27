@@ -1,17 +1,17 @@
 use std::sync::Arc;
 
-use liblumen_alloc::erts::exception::system::Alloc;
+use liblumen_alloc::erts::exception::Alloc;
 use liblumen_alloc::erts::process::code::stack::frame::{Frame, Placement};
-use liblumen_alloc::erts::process::{code, ProcessControlBlock};
-use liblumen_alloc::erts::term::{atom_unchecked, Term};
+use liblumen_alloc::erts::process::{code, Process};
+use liblumen_alloc::erts::term::prelude::*;
 use liblumen_alloc::ModuleFunctionArity;
 
 pub fn place_frame_with_arguments(
-    process: &ProcessControlBlock,
+    process: &Process,
     placement: Placement,
     child: Term,
 ) -> Result<(), Alloc> {
-    assert!(child.is_resource_reference());
+    assert!(child.is_boxed_resource_reference());
     process.stack_push(child)?;
     process.place_frame(frame(), placement);
 
@@ -29,14 +29,14 @@ pub fn place_frame_with_arguments(
 // remove_ok = Lumen.Web.Element.remove(child);
 // Lumen.Web.Wait.with_return(remove_ok)
 // ```
-fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
+fn code(arc_process: &Arc<Process>) -> code::Result {
     arc_process.reduce();
 
     let ok = arc_process.stack_pop().unwrap();
-    assert_eq!(ok, atom_unchecked("ok"));
+    assert_eq!(ok, Atom::str_to_term("ok"));
 
     let child = arc_process.stack_pop().unwrap();
-    assert!(child.is_resource_reference());
+    assert!(child.is_boxed_resource_reference());
 
     lumen_web::element::remove_1::place_frame_with_arguments(
         arc_process,
@@ -44,7 +44,7 @@ fn code(arc_process: &Arc<ProcessControlBlock>) -> code::Result {
         child,
     )?;
 
-    ProcessControlBlock::call_code(arc_process)
+    Process::call_code(arc_process)
 }
 
 fn frame() -> Frame {

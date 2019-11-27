@@ -8,8 +8,8 @@ use proptest::test_runner::{Config, TestRunner};
 use proptest::{prop_assert, prop_assert_eq};
 
 use liblumen_alloc::badarith;
-use liblumen_alloc::erts::process::ProcessControlBlock;
-use liblumen_alloc::erts::term::{Float, SmallInteger, Term};
+use liblumen_alloc::erts::process::Process;
+use liblumen_alloc::erts::term::prelude::*;
 
 use crate::otp::erlang::add_2::native;
 use crate::scheduler::{with_process, with_process_arc};

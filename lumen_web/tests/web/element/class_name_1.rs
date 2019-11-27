@@ -1,13 +1,13 @@
-#[path = "./class_name_1/label_1.rs"]
+#[path = "class_name_1/label_1.rs"]
 pub mod label_1;
-#[path = "./class_name_1/label_2.rs"]
+#[path = "class_name_1/label_2.rs"]
 pub mod label_2;
-#[path = "./class_name_1/label_3.rs"]
+#[path = "class_name_1/label_3.rs"]
 pub mod label_3;
 
 use super::*;
 
-use liblumen_alloc::erts::term::Atom;
+use liblumen_alloc::erts::term::prelude::Atom;
 
 use lumen_web::window;
 
@@ -114,7 +114,7 @@ fn promise() -> js_sys::Promise {
         // # full stack: ()
         // # returns: {:ok, window}
         // ```
-        window::window_0::place_frame(child_process, Placement::Push);
+        window::window_0::place_frame_with_arguments(child_process, Placement::Push)?;
 
         Ok(())
     })
